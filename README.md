@@ -6,6 +6,51 @@ Never manually type `require()` statements again! Just type `:` at the start of 
 
 ---
 
+## 🚀 Quick Start (5 Minutes)
+
+### Step 1: Download & Build
+
+Open a terminal (Command Prompt or PowerShell) and run these commands:
+
+```bash
+# Clone the repository
+git clone https://github.com/MrKirdid/vscode-roblox-super-require.git
+
+# Enter the folder
+cd vscode-roblox-super-require
+
+# Install dependencies
+npm install
+
+# Compile the extension
+npm run compile
+
+# Package as VSIX file
+npx vsce package
+```
+
+This creates a file called `roblox-super-require-1.0.0.vsix` in the folder.
+
+### Step 2: Install in VS Code
+
+1. Open VS Code
+2. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
+3. Type **"Install from VSIX"** and select it
+4. Navigate to the folder and select `roblox-super-require-1.0.0.vsix`
+5. Click **Reload** when prompted
+
+### Step 3: Use It!
+
+1. Open any `.luau` file in your Rojo project
+2. Go to the **start of an empty line**
+3. Type `:` followed by part of a module name (e.g., `:jan`)
+4. Select from the autocomplete dropdown
+5. It inserts: `local Janitor = require(game.ReplicatedStorage.Shared.Packages.Janitor)`
+
+**That's it! 🎉**
+
+---
+
 ## ✨ Features
 
 ### 🎯 Smart Trigger
@@ -47,47 +92,6 @@ Never manually type `require()` statements again! Just type `:` at the start of 
 - Automatically generates: `local <ModuleName> = require(game.<InstancePath>)`
 - Replaces the `:` and search query seamlessly
 - Shows full paths in autocomplete for disambiguation
-
----
-
-## 📦 Installation
-
-### Option 1: Install from VSIX (Recommended)
-
-1. Download the `.vsix` file from releases
-2. Open VS Code
-3. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
-4. Type "Install from VSIX" and select it
-5. Choose the downloaded `.vsix` file
-6. Reload VS Code
-
-### Option 2: Install from Source
-
-1. **Clone or download this repository**
-   ```bash
-   git clone https://github.com/MrKirdid/vscode-roblox-super-require.git
-   cd vscode-roblox-super-require
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Compile TypeScript**
-   ```bash
-   npm run compile
-   ```
-
-4. **Package the extension** (optional)
-   ```bash
-   npm install -g @vscode/vsce
-   vsce package
-   ```
-
-5. **Install in VS Code**
-   - Press `F5` to open a new VS Code window with the extension loaded (for development)
-   - Or install the generated `.vsix` file using the method above
 
 ---
 
