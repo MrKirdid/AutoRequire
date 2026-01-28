@@ -2,6 +2,32 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Sourcemap, SourcemapNode, RojoProject, RojoTreeNode } from './types';
+import { logger } from './logger';
+
+/**
+ * Check if a string is a valid Lua identifier (can use dot notation)
+ */
+function isValidLuaIdentifier(name: string): boolean {
+  return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
+}
+
+/**
+ * Format a path segment for Lua - use dot notation if valid identifier, bracket notation otherwise
+ */
+function formatPathSegment(segment: string): string {
+  if (isValidLuaIdentifier(segment)) {
+    return `.${segment}`;
+  }
+  // Use bracket notation for invalid identifiers (escape backslash and quotes)
+  return `["${segment.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`;
+}
+
+/**
+ * Build a Lua path from segments with proper notation
+ */
+function buildLuaPath(prefix: string, segments: string[]): string {
+  return prefix + segments.map(formatPathSegment).join('');
+}
 
 /**
  * Resolves file system paths to Roblox Instance paths
@@ -10,54 +36,103 @@ export class PathResolver {
   private sourcemapCache: Map<string, Sourcemap> = new Map();
   private rojoProjectCache: Map<string, RojoProject> = new Map();
   private fileToInstancePathCache: Map<string, string> = new Map();
+  private initialized: boolean = false;
 
   constructor(private workspaceFolders: readonly vscode.WorkspaceFolder[]) {
-    this.loadSourcemaps();
-    this.loadRojoProjects();
+    // Don't load anything in constructor - do it lazily or via explicit init
   }
 
   /**
-   * Load all sourcemap.json files from workspace folders
+   * Initialize by loading project files (call this explicitly)
    */
-  private loadSourcemaps(): void {
+  public async initialize(): Promise<void> {
+    if (this.initialized) return;
+    
+    await this.loadSourcemapsAsync();
+    await this.loadRojoProjectsAsync();
+    this.initialized = true;
+  }
+
+  /**
+   * Load all sourcemap.json files from workspace folders (async)
+   */
+  private async loadSourcemapsAsync(): Promise<void> {
     for (const folder of this.workspaceFolders) {
       const sourcemapPath = path.join(folder.uri.fsPath, 'sourcemap.json');
       
-      if (fs.existsSync(sourcemapPath)) {
-        try {
-          const content = fs.readFileSync(sourcemapPath, 'utf-8');
+      try {
+        const uri = vscode.Uri.file(sourcemapPath);
+        const exists = await vscode.workspace.fs.stat(uri).then(() => true, () => false);
+        
+        if (exists) {
+          const contentBytes = await vscode.workspace.fs.readFile(uri);
+          const content = Buffer.from(contentBytes).toString('utf-8');
           const sourcemap: Sourcemap = JSON.parse(content);
           this.sourcemapCache.set(folder.uri.fsPath, sourcemap);
-          console.log(`[Super Require] Loaded sourcemap for ${folder.name}`);
-        } catch (error) {
-          console.error(`[Super Require] Failed to parse sourcemap at ${sourcemapPath}:`, error);
         }
+      } catch (error) {
+        logger.error(`Failed to load sourcemap at ${sourcemapPath}`, error);
       }
     }
   }
 
   /**
-   * Load all default.project.json files from workspace folders (Rojo project files)
+   * Load all default.project.json files from workspace folders (async)
+   */
+  private async loadRojoProjectsAsync(): Promise<void> {
+    for (const folder of this.workspaceFolders) {
+      const projectPath = path.join(folder.uri.fsPath, 'default.project.json');
+
+      try {
+        const uri = vscode.Uri.file(projectPath);
+        const exists = await vscode.workspace.fs.stat(uri).then(() => true, () => false);
+        
+        if (exists) {
+          const contentBytes = await vscode.workspace.fs.readFile(uri);
+          const content = Buffer.from(contentBytes).toString('utf-8');
+          const project: RojoProject = JSON.parse(content);
+          this.rojoProjectCache.set(folder.uri.fsPath, project);
+        }
+      } catch (error) {
+        logger.error(`Failed to load Rojo project at ${projectPath}`, error);
+      }
+    }
+  }
+
+  /**
+   * Load sourcemaps synchronously (for reload)
+   */
+  private loadSourcemaps(): void {
+    for (const folder of this.workspaceFolders) {
+      const sourcemapPath = path.join(folder.uri.fsPath, 'sourcemap.json');
+      
+      try {
+        if (fs.existsSync(sourcemapPath)) {
+          const content = fs.readFileSync(sourcemapPath, 'utf-8');
+          const sourcemap: Sourcemap = JSON.parse(content);
+          this.sourcemapCache.set(folder.uri.fsPath, sourcemap);
+        }
+      } catch (error) {
+        logger.error(`Failed to parse sourcemap at ${sourcemapPath}`, error);
+      }
+    }
+  }
+
+  /**
+   * Load Rojo projects synchronously (for reload)
    */
   private loadRojoProjects(): void {
     for (const folder of this.workspaceFolders) {
-      // Try default.project.json
-      const projectPaths = [
-        path.join(folder.uri.fsPath, 'default.project.json'),
-      ];
+      const projectPath = path.join(folder.uri.fsPath, 'default.project.json');
 
-      for (const projectPath of projectPaths) {
+      try {
         if (fs.existsSync(projectPath)) {
-          try {
-            const content = fs.readFileSync(projectPath, 'utf-8');
-            const project: RojoProject = JSON.parse(content);
-            this.rojoProjectCache.set(folder.uri.fsPath, project);
-            console.log(`[Super Require] Loaded Rojo project for ${folder.name}`);
-            break;
-          } catch (error) {
-            console.error(`[Super Require] Failed to parse Rojo project at ${projectPath}:`, error);
-          }
+          const content = fs.readFileSync(projectPath, 'utf-8');
+          const project: RojoProject = JSON.parse(content);
+          this.rojoProjectCache.set(folder.uri.fsPath, project);
         }
+      } catch (error) {
+        logger.error(`Failed to parse Rojo project at ${projectPath}`, error);
       }
     }
   }
@@ -86,36 +161,46 @@ export class PathResolver {
   public resolveInstancePath(fsPath: string): string {
     // Check cache first
     if (this.fileToInstancePathCache.has(fsPath)) {
-      return this.fileToInstancePathCache.get(fsPath)!;
+      const cached = this.fileToInstancePathCache.get(fsPath)!;
+      return cached;
     }
 
-    // Try sourcemap resolution first
-    const sourcemapPath = this.resolveFromSourcemap(fsPath);
-    if (sourcemapPath) {
-      const fullPath = 'game.' + sourcemapPath;
+    try {
+      // Try sourcemap resolution first
+      const sourcemapSegments = this.resolveFromSourcemapAsSegments(fsPath);
+      if (sourcemapSegments && sourcemapSegments.length > 0) {
+        const fullPath = 'game' + formatPathSegment(sourcemapSegments[0], false) + 
+          (sourcemapSegments.length > 1 ? sourcemapSegments.slice(1).map((s, i) => formatPathSegment(s, false)).join('') : '');
+        this.fileToInstancePathCache.set(fsPath, fullPath);
+        return fullPath;
+      }
+
+      // Try Rojo project resolution
+      const rojoSegments = this.resolveFromRojoProjectAsSegments(fsPath);
+      if (rojoSegments && rojoSegments.length > 0) {
+        const fullPath = 'game' + rojoSegments.map((s, i) => formatPathSegment(s, false)).join('');
+        this.fileToInstancePathCache.set(fsPath, fullPath);
+        return fullPath;
+      }
+
+      // Fallback to folder convention
+      const conventionSegments = this.resolveFromConventionAsSegments(fsPath);
+      const fullPath = 'game' + conventionSegments.map((s, i) => formatPathSegment(s, false)).join('');
       this.fileToInstancePathCache.set(fsPath, fullPath);
       return fullPath;
+    } catch (error) {
+      // Fallback to a simple path on error
+      const fileName = path.basename(fsPath).replace(/\.(server|client)?\.luau$/i, '');
+      const safePath = 'game' + formatPathSegment(fileName, false);
+      this.fileToInstancePathCache.set(fsPath, safePath);
+      return safePath;
     }
-
-    // Try Rojo project resolution
-    const rojoPath = this.resolveFromRojoProject(fsPath);
-    if (rojoPath) {
-      const fullPath = 'game.' + rojoPath;
-      this.fileToInstancePathCache.set(fsPath, fullPath);
-      return fullPath;
-    }
-
-    // Fallback to folder convention
-    const conventionPath = this.resolveFromConvention(fsPath);
-    const fullPath = 'game.' + conventionPath;
-    this.fileToInstancePathCache.set(fsPath, fullPath);
-    return fullPath;
   }
 
   /**
-   * Resolve path using sourcemap.json
+   * Resolve path using sourcemap.json (returns segments array)
    */
-  private resolveFromSourcemap(fsPath: string): string | null {
+  private resolveFromSourcemapAsSegments(fsPath: string): string[] | null {
     // Find which workspace folder contains this file
     const workspaceFolder = this.workspaceFolders.find(folder =>
       fsPath.startsWith(folder.uri.fsPath)
@@ -135,25 +220,25 @@ export class PathResolver {
     const workspacePath = workspaceFolder.uri.fsPath.replace(/\\/g, '/');
 
     // Search through sourcemap tree
-    const result = this.searchSourcemapNode(
+    return this.searchSourcemapNodeAsSegments(
       sourcemap.children,
       normalizedFsPath,
       workspacePath,
       []
     );
-
-    return result;
   }
 
+
+
   /**
-   * Recursively search sourcemap tree for matching file path
+   * Recursively search sourcemap tree for matching file path (returns segments array)
    */
-  private searchSourcemapNode(
+  private searchSourcemapNodeAsSegments(
     nodes: SourcemapNode[],
     targetPath: string,
     workspacePath: string,
     pathSegments: string[]
-  ): string | null {
+  ): string[] | null {
     for (const node of nodes) {
       const currentPath = [...pathSegments, node.name];
 
@@ -162,15 +247,19 @@ export class PathResolver {
         for (const filePath of node.filePaths) {
           const fullPath = path.join(workspacePath, filePath).replace(/\\/g, '/');
           
-          if (fullPath === targetPath || fullPath === targetPath.replace(/\.luau$/, '')) {
-            return currentPath.join('.');
+          // Normalize both paths by removing .luau extension for comparison
+          const normalizedFullPath = fullPath.replace(/\.luau$/i, '');
+          const normalizedTargetPath = targetPath.replace(/\.luau$/i, '');
+          
+          if (normalizedFullPath === normalizedTargetPath) {
+            return currentPath;
           }
         }
       }
 
       // Search children recursively
       if (node.children) {
-        const result = this.searchSourcemapNode(
+        const result = this.searchSourcemapNodeAsSegments(
           node.children,
           targetPath,
           workspacePath,
@@ -187,9 +276,9 @@ export class PathResolver {
   }
 
   /**
-   * Resolve path using Rojo default.project.json
+   * Resolve path using Rojo default.project.json (returns segments array)
    */
-  private resolveFromRojoProject(fsPath: string): string | null {
+  private resolveFromRojoProjectAsSegments(fsPath: string): string[] | null {
     // Find which workspace folder contains this file
     const workspaceFolder = this.workspaceFolders.find(folder =>
       fsPath.startsWith(folder.uri.fsPath)
@@ -210,19 +299,18 @@ export class PathResolver {
     const relativePath = path.relative(workspacePath, normalizedFsPath).replace(/\\/g, '/');
 
     // Search through Rojo tree for $path mappings
-    const result = this.searchRojoTree(project.tree, relativePath, workspacePath, []);
-    return result;
+    return this.searchRojoTreeAsSegments(project.tree, relativePath, workspacePath, []);
   }
 
   /**
-   * Recursively search Rojo project tree for matching file path
+   * Recursively search Rojo project tree for matching file path (returns segments array)
    */
-  private searchRojoTree(
+  private searchRojoTreeAsSegments(
     node: RojoTreeNode,
     targetRelativePath: string,
     workspacePath: string,
     pathSegments: string[]
-  ): string | null {
+  ): string[] | null {
     // Check if this node has a $path that maps to or contains our target
     if (node.$path) {
       const nodePath = node.$path.replace(/\\/g, '/');
@@ -243,9 +331,8 @@ export class PathResolver {
         // Process remaining segments - handle init.luau and file extensions
         const processedSegments = this.processPathSegments(segments);
         
-        // Build full path
-        const fullSegments = [...pathSegments, ...processedSegments];
-        return fullSegments.join('.');
+        // Build full path as segments array
+        return [...pathSegments, ...processedSegments];
       }
     }
 
@@ -256,7 +343,7 @@ export class PathResolver {
         // Type guard: ensure childNode is a non-null object (RojoTreeNode)
         if (childNode !== null && childNode !== undefined && typeof childNode === 'object') {
           const childPath = [...pathSegments, key];
-          const result = this.searchRojoTree(childNode as RojoTreeNode, targetRelativePath, workspacePath, childPath);
+          const result = this.searchRojoTreeAsSegments(childNode as RojoTreeNode, targetRelativePath, workspacePath, childPath);
           if (result) {
             return result;
           }
@@ -268,7 +355,7 @@ export class PathResolver {
   }
 
   /**
-   * Process path segments - handle init.luau files and extensions
+   * Process path segments - handle init.luau/init.lua files and extensions
    */
   private processPathSegments(segments: string[]): string[] {
     if (segments.length === 0) {
@@ -280,15 +367,11 @@ export class PathResolver {
     for (let i = 0; i < segments.length; i++) {
       let segment = segments[i];
       
-      // Remove .luau extension
-      segment = segment.replace(/\.luau$/, '');
+      // Remove .luau extension and .server/.client suffixes
+      segment = segment.replace(/\.(server|client)?\.luau$/i, '');
       
       // Handle init files - they represent the parent folder, so skip them
-      // But if it's the last segment and it's init, we don't add anything
-      // because the parent folder name is already in the path
-      if (segment.toLowerCase() === 'init' || 
-          segment.toLowerCase() === 'init.server' || 
-          segment.toLowerCase() === 'init.client') {
+      if (segment.toLowerCase() === 'init') {
         // Skip init files - they represent the parent folder
         continue;
       }
@@ -300,35 +383,32 @@ export class PathResolver {
   }
 
   /**
-   * Resolve path using folder naming conventions
+   * Resolve path using folder naming conventions (returns segments array)
    */
-  private resolveFromConvention(fsPath: string): string {
+  private resolveFromConventionAsSegments(fsPath: string): string[] {
     // Find workspace folder
     const workspaceFolder = this.workspaceFolders.find(folder =>
       fsPath.startsWith(folder.uri.fsPath)
     );
 
     if (!workspaceFolder) {
-      return this.getFileNameWithoutExtension(fsPath);
+      return [this.getFileNameWithoutExtension(fsPath)];
     }
 
     const relativePath = path.relative(workspaceFolder.uri.fsPath, fsPath);
     const segments = relativePath.split(path.sep);
 
-    // Process segments - handle init.luau and extensions
+    // Process segments - handle init.luau/init.lua and extensions
     const processedSegments: string[] = [];
     
-    for (let i = 0; i < segments.length; i++) {
-      let segment = segments[i];
-      
-      // Remove .luau extension
-      segment = segment.replace(/\.luau$/, '');
+    for (const seg of segments) {
+      // Remove .luau/.lua extension and .server/.client suffixes
+      let segment = seg.replace(/\.(server|client)?\.(luau|lua)$/i, '');
+      segment = segment.replace(/\.(luau|lua)$/i, '');
       
       // Handle init files
-      if (segment.toLowerCase() === 'init' || 
-          segment.toLowerCase() === 'init.server' || 
-          segment.toLowerCase() === 'init.client') {
-        continue; // Skip - parent folder name is the module name
+      if (segment.toLowerCase() === 'init') {
+        continue;
       }
       
       processedSegments.push(segment);
@@ -356,17 +436,23 @@ export class PathResolver {
       const mappedService = serviceMap[firstSegment];
 
       if (mappedService) {
-        processedSegments[0] = mappedService;
+        // Handle services that have dots in them (like StarterPlayer.StarterPlayerScripts)
+        if (mappedService.includes('.')) {
+          const serviceParts = mappedService.split('.');
+          processedSegments.splice(0, 1, ...serviceParts);
+        } else {
+          processedSegments[0] = mappedService;
+        }
       }
     }
 
     // Handle edge case where all segments were init files - return a default
     if (processedSegments.length === 0) {
       // Get the file name as a fallback
-      return this.getFileNameWithoutExtension(fsPath);
+      return [this.getFileNameWithoutExtension(fsPath)];
     }
 
-    return processedSegments.join('.');
+    return processedSegments;
   }
 
   /**
@@ -374,7 +460,7 @@ export class PathResolver {
    */
   private getFileNameWithoutExtension(fsPath: string): string {
     const fileName = path.basename(fsPath);
-    return fileName.replace(/\.luau$/, '');
+    return fileName.replace(/\.(luau|lua)$/i, '');
   }
 
   /**

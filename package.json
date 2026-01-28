@@ -26,10 +26,35 @@
 	],
 	"activationEvents": [
 		"onLanguage:lua",
-		"onLanguage:luau"
+		"onLanguage:luau",
+		"workspaceContains:**/*.luau",
+		"workspaceContains:**/*.lua"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
+		"commands": [
+			{
+				"command": "robloxSuperRequire.reindex",
+				"title": "Roblox Super Require: Reindex Modules"
+			},
+			{
+				"command": "robloxSuperRequire.showStatus",
+				"title": "Roblox Super Require: Show Status"
+			}
+		],
+		"languages": [
+			{
+				"id": "luau",
+				"aliases": [
+					"Luau",
+					"luau"
+				],
+				"extensions": [
+					".luau"
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
 		"configuration": {
 			"title": "Roblox Super Require",
 			"properties": {
@@ -56,21 +81,22 @@
 		}
 	},
 	"scripts": {
-		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./",
-		"watch": "tsc -watch -p ./",
+		"vscode:prepublish": "npm run package",
+		"compile": "node esbuild.js",
+		"watch": "node esbuild.js --watch",
+		"package": "node esbuild.js --production",
 		"pretest": "npm run compile",
-		"lint": "eslint src --ext ts",
-		"package": "vsce package"
+		"lint": "eslint src --ext ts"
 	},
 	"devDependencies": {
 		"@types/node": "^18.0.0",
 		"@types/vscode": "^1.75.0",
 		"@typescript-eslint/eslint-plugin": "^5.0.0",
 		"@typescript-eslint/parser": "^5.0.0",
+		"@vscode/vsce": "^2.19.0",
+		"esbuild": "^0.27.2",
 		"eslint": "^8.0.0",
-		"typescript": "^5.0.0",
-		"@vscode/vsce": "^2.19.0"
+		"typescript": "^5.0.0"
 	},
 	"dependencies": {
 		"fuse.js": "^7.0.0"

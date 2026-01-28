@@ -24,16 +24,17 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
     
     this.fuse = new Fuse(modules, {
       keys: [
-        { name: 'name', weight: 2 },      // Prioritize module name
+        { name: 'name', weight: 3 },      // Prioritize module name heavily
         { name: 'relativePath', weight: 1 } // Secondary: search in path
       ],
-      threshold: this.config.fuzzyThreshold,
+      threshold: 0.6, // Higher = more fuzzy (0.6 is quite lenient)
       includeScore: true,
       minMatchCharLength: 1,
       ignoreLocation: true, // Allow matches anywhere in the string
+      useExtendedSearch: false,
+      findAllMatches: true, // Don't stop at first match
+      shouldSort: true,
     });
-
-    console.log(`[Super Require] Fuse index updated with ${modules.length} modules`);
   }
 
   /**
@@ -55,7 +56,7 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
 
     // Check if we're at the start of a line with ':'
     // Pattern: optional whitespace, then ':', then optional characters (search query)
-    const match = /^(\s*):([\w]*)$/.exec(textBeforeCursor);
+    const match = /^(\s*):(.*)$/.exec(textBeforeCursor);
     
     if (!match) {
       return undefined;
@@ -72,26 +73,50 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
 
     // Convert to completion items
     const completionItems = results.map(moduleInfo => 
-      this.createCompletionItem(moduleInfo, document, position, leadingWhitespace, fullMatch)
+      this.createCompletionItem(moduleInfo, document, position, leadingWhitespace, fullMatch, textBeforeCursor)
     );
-
-    return new vscode.CompletionList(completionItems, false);
+    
+    // Mark as incomplete so VS Code re-queries as user types (enables fuzzy search)
+    return new vscode.CompletionList(completionItems, true);
   }
 
   /**
    * Search for modules using fuzzy search
    */
   private searchModules(query: string): ModuleInfo[] {
+    const allModules = this.moduleIndexer.getModules();
+    
+    // If query is empty, return all modules (limited by maxSuggestions)
+    if (!query || query.trim() === '') {
+      return allModules.slice(0, this.config.maxSuggestions);
+    }
+
+    const queryLower = query.toLowerCase();
+    
+    // First, try simple substring matching (often better than fuzzy for code)
+    const substringMatches = allModules.filter(m => 
+      m.name.toLowerCase().includes(queryLower) ||
+      m.relativePath.toLowerCase().includes(queryLower)
+    );
+    
+    // Sort substring matches: exact start match first, then by name length
+    substringMatches.sort((a, b) => {
+      const aStartsWith = a.name.toLowerCase().startsWith(queryLower);
+      const bStartsWith = b.name.toLowerCase().startsWith(queryLower);
+      if (aStartsWith && !bStartsWith) return -1;
+      if (!aStartsWith && bStartsWith) return 1;
+      return a.name.length - b.name.length;
+    });
+    
+    if (substringMatches.length > 0) {
+      return substringMatches.slice(0, this.config.maxSuggestions);
+    }
+    
+    // Fall back to fuzzy search if no substring matches
     if (!this.fuse) {
       return [];
     }
 
-    // If query is empty, return all modules (limited by maxSuggestions)
-    if (!query || query.trim() === '') {
-      return this.moduleIndexer.getModules().slice(0, this.config.maxSuggestions);
-    }
-
-    // Perform fuzzy search
     const results = this.fuse.search(query);
 
     // Extract items and limit results
@@ -108,9 +133,16 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
     document: vscode.TextDocument,
     position: vscode.Position,
     leadingWhitespace: string,
-    fullMatch: string
+    fullMatch: string,
+    textBeforeCursor: string
   ): vscode.CompletionItem {
-    const requireStatement = `local ${moduleInfo.name} = require(${moduleInfo.instancePath})`;
+    // Sanitize name - remove any remaining extensions and make it a valid Lua identifier
+    let varName = moduleInfo.name
+      .replace(/\.(luau|lua|server|client)$/gi, '') // Remove extensions
+      .replace(/[^a-zA-Z0-9_]/g, '_') // Replace invalid chars with underscore
+      .replace(/^[0-9]/, '_$&'); // Prefix with _ if starts with number
+    
+    const requireStatement = `local ${varName} = require(${moduleInfo.instancePath})`;
 
     const item = new vscode.CompletionItem(
       moduleInfo.name,
@@ -138,8 +170,8 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
     // We want exact matches to appear first
     item.sortText = moduleInfo.name;
 
-    // Filter text for better matching
-    item.filterText = `:${moduleInfo.name}`;
+    // Use the full text before cursor as filter text to prevent VS Code from re-filtering our fuzzy results
+    item.filterText = textBeforeCursor;
 
     return item;
   }
