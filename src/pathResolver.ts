@@ -41,7 +41,7 @@ export class PathResolver {
    */
   private loadRojoProjects(): void {
     for (const folder of this.workspaceFolders) {
-      // Try default.project.json first, then *.project.json
+      // Try default.project.json
       const projectPaths = [
         path.join(folder.uri.fsPath, 'default.project.json'),
       ];
@@ -252,10 +252,11 @@ export class PathResolver {
     // Search children (keys that don't start with $)
     for (const key of Object.keys(node)) {
       if (!key.startsWith('$')) {
-        const childNode = node[key] as RojoTreeNode;
-        if (childNode && typeof childNode === 'object') {
+        const childNode = node[key];
+        // Type guard: ensure childNode is a non-null object (RojoTreeNode)
+        if (childNode !== null && childNode !== undefined && typeof childNode === 'object') {
           const childPath = [...pathSegments, key];
-          const result = this.searchRojoTree(childNode, targetRelativePath, workspacePath, childPath);
+          const result = this.searchRojoTree(childNode as RojoTreeNode, targetRelativePath, workspacePath, childPath);
           if (result) {
             return result;
           }
@@ -338,7 +339,7 @@ export class PathResolver {
       'src': 'ReplicatedStorage',
       'server': 'ServerScriptService',
       'client': 'StarterPlayer.StarterPlayerScripts',
-      'shared': 'ReplicatedStorage.Shared',
+      'shared': 'ReplicatedStorage',
       'replicated': 'ReplicatedStorage',
       'replicatedstorage': 'ReplicatedStorage',
       'serverscriptservice': 'ServerScriptService',
@@ -357,6 +358,12 @@ export class PathResolver {
       if (mappedService) {
         processedSegments[0] = mappedService;
       }
+    }
+
+    // Handle edge case where all segments were init files - return a default
+    if (processedSegments.length === 0) {
+      // Get the file name as a fallback
+      return this.getFileNameWithoutExtension(fsPath);
     }
 
     return processedSegments.join('.');
