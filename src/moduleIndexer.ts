@@ -4,7 +4,7 @@ import { ModuleInfo } from './types';
 import { PathResolver } from './pathResolver';
 
 /**
- * Indexes and caches all Lua/Luau modules in the workspace
+ * Indexes and caches all Luau modules in the workspace
  */
 export class ModuleIndexer {
   private modules: ModuleInfo[] = [];
@@ -40,13 +40,13 @@ export class ModuleIndexer {
     const startTime = Date.now();
 
     try {
-      // Search for all .lua and .luau files
+      // Search for only .luau files (Rojo standard)
       const files = await vscode.workspace.findFiles(
-        '**/*.{lua,luau}',
+        '**/*.luau',
         '**/node_modules/**' // Exclude node_modules
       );
 
-      console.log(`[Super Require] Found ${files.length} Lua/Luau files`);
+      console.log(`[Super Require] Found ${files.length} Luau files`);
 
       for (const file of files) {
         this.indexFile(file);
@@ -67,11 +67,23 @@ export class ModuleIndexer {
   private indexFile(uri: vscode.Uri): void {
     const fsPath = uri.fsPath;
     const fileName = path.basename(fsPath);
-    const name = fileName.replace(/\.(lua|luau)$/, '');
+    const nameWithoutExt = fileName.replace(/\.luau$/, '');
 
-    // Skip init files or files starting with dot
-    if (name.toLowerCase() === 'init' || fileName.startsWith('.')) {
+    // Skip files starting with dot
+    if (fileName.startsWith('.')) {
       return;
+    }
+
+    // Handle init.luau files - use parent folder name as module name
+    let name: string;
+    if (nameWithoutExt.toLowerCase() === 'init' || 
+        nameWithoutExt.toLowerCase() === 'init.server' || 
+        nameWithoutExt.toLowerCase() === 'init.client') {
+      // Get parent folder name as the module name
+      const parentDir = path.dirname(fsPath);
+      name = path.basename(parentDir);
+    } else {
+      name = nameWithoutExt;
     }
 
     // Find workspace folder for relative path
@@ -100,9 +112,9 @@ export class ModuleIndexer {
    * Set up file system watcher for dynamic updates
    */
   private setupFileWatcher(): void {
-    // Watch for .lua and .luau file changes
+    // Watch for only .luau file changes (Rojo standard)
     this.fileWatcher = vscode.workspace.createFileSystemWatcher(
-      '**/*.{lua,luau}'
+      '**/*.luau'
     );
 
     // File created

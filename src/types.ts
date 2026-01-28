@@ -12,7 +12,7 @@ export interface ModuleInfo {
   /** Absolute file system path to the module */
   fsPath: string;
   
-  /** Roblox Instance path (e.g., "ReplicatedStorage.Packages.Janitor") */
+  /** Roblox Instance path (e.g., "game.ReplicatedStorage.Packages.Janitor") */
   instancePath: string;
   
   /** Relative path from workspace root */
@@ -51,6 +51,31 @@ export interface Sourcemap {
   
   /** Child nodes (services) */
   children?: SourcemapNode[];
+}
+
+/**
+ * Rojo project tree node (from default.project.json)
+ */
+export interface RojoTreeNode {
+  /** Class name for the instance */
+  $className?: string;
+  
+  /** File system path mapping */
+  $path?: string;
+  
+  /** Other properties for nested children */
+  [key: string]: RojoTreeNode | string | undefined;
+}
+
+/**
+ * Rojo project structure (default.project.json)
+ */
+export interface RojoProject {
+  /** Project name */
+  name: string;
+  
+  /** The tree structure mapping file paths to Roblox instances */
+  tree: RojoTreeNode;
 }
 
 /**

@@ -97,6 +97,35 @@ export async function activate(context: vscode.ExtensionContext) {
 
   disposables.push(sourcemapWatcher);
 
+  // Watch for default.project.json changes (Rojo project file)
+  const rojoProjectWatcher = vscode.workspace.createFileSystemWatcher('**/default.project.json');
+  
+  rojoProjectWatcher.onDidChange(() => {
+    console.log('[Super Require] default.project.json changed, reloading...');
+    pathResolver?.reloadRojoProjects();
+    pathResolver?.clearCache();
+    moduleIndexer?.rebuildIndex();
+    completionProvider?.updateFuseIndex();
+  });
+
+  rojoProjectWatcher.onDidCreate(() => {
+    console.log('[Super Require] default.project.json created, reloading...');
+    pathResolver?.reloadRojoProjects();
+    pathResolver?.clearCache();
+    moduleIndexer?.rebuildIndex();
+    completionProvider?.updateFuseIndex();
+  });
+
+  rojoProjectWatcher.onDidDelete(() => {
+    console.log('[Super Require] default.project.json deleted, reloading...');
+    pathResolver?.reloadRojoProjects();
+    pathResolver?.clearCache();
+    moduleIndexer?.rebuildIndex();
+    completionProvider?.updateFuseIndex();
+  });
+
+  disposables.push(rojoProjectWatcher);
+
   // Register commands
   const reindexCommand = vscode.commands.registerCommand(
     'robloxSuperRequire.reindex',
