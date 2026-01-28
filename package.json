@@ -1,0 +1,74 @@
+{
+	"name": "roblox-super-require",
+	"displayName": "Roblox Super Require Autocomplete",
+	"description": "Intelligent require autocomplete for Roblox Lua/Luau with fuzzy search and automatic path resolution",
+	"version": "1.0.0",
+	"publisher": "MrKirdid",
+	"engines": {
+		"vscode": "^1.75.0"
+	},
+	"categories": [
+		"Programming Languages",
+		"Snippets",
+		"Other"
+	],
+	"keywords": [
+		"roblox",
+		"lua",
+		"luau",
+		"require",
+		"autocomplete",
+		"fuzzy search"
+	],
+	"activationEvents": [
+		"onLanguage:lua",
+		"onLanguage:luau"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"configuration": {
+			"title": "Roblox Super Require",
+			"properties": {
+				"robloxSuperRequire.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable/disable Super Require autocomplete"
+				},
+				"robloxSuperRequire.fuzzyThreshold": {
+					"type": "number",
+					"default": 0.4,
+					"minimum": 0,
+					"maximum": 1,
+					"description": "Fuzzy search threshold (0 = exact match, 1 = match anything)"
+				},
+				"robloxSuperRequire.maxSuggestions": {
+					"type": "number",
+					"default": 20,
+					"minimum": 1,
+					"maximum": 100,
+					"description": "Maximum number of autocomplete suggestions to show"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"pretest": "npm run compile",
+		"lint": "eslint src --ext ts",
+		"package": "vsce package"
+	},
+	"devDependencies": {
+		"@types/node": "^18.0.0",
+		"@types/vscode": "^1.75.0",
+		"@typescript-eslint/eslint-plugin": "^5.0.0",
+		"@typescript-eslint/parser": "^5.0.0",
+		"eslint": "^8.0.0",
+		"typescript": "^5.0.0",
+		"@vscode/vsce": "^2.19.0"
+	},
+	"dependencies": {
+		"fuse.js": "^7.0.0"
+	}
+}
