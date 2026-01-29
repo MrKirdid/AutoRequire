@@ -12,14 +12,32 @@ function isValidLuaIdentifier(name: string): boolean {
 }
 
 /**
+ * Strip Luau/Lua file extensions from a segment name
+ */
+function stripLuaExtensions(segment: string): string {
+  // Strip all common Roblox Lua extensions
+  return segment
+    .replace(/\.server\.luau$/i, '')
+    .replace(/\.client\.luau$/i, '')
+    .replace(/\.server\.lua$/i, '')
+    .replace(/\.client\.lua$/i, '')
+    .replace(/\.luau$/i, '')
+    .replace(/\.lua$/i, '');
+}
+
+/**
  * Format a path segment for Lua - use dot notation if valid identifier, bracket notation otherwise
+ * Automatically strips .luau/.lua extensions
  */
 function formatPathSegment(segment: string): string {
-  if (isValidLuaIdentifier(segment)) {
-    return `.${segment}`;
+  // First strip any file extensions
+  const cleanSegment = stripLuaExtensions(segment);
+  
+  if (isValidLuaIdentifier(cleanSegment)) {
+    return `.${cleanSegment}`;
   }
   // Use bracket notation for invalid identifiers (escape backslash and quotes)
-  return `["${segment.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`;
+  return `["${cleanSegment.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`;
 }
 
 /**
@@ -169,8 +187,7 @@ export class PathResolver {
       // Try sourcemap resolution first
       const sourcemapSegments = this.resolveFromSourcemapAsSegments(fsPath);
       if (sourcemapSegments && sourcemapSegments.length > 0) {
-        const fullPath = 'game' + formatPathSegment(sourcemapSegments[0], false) + 
-          (sourcemapSegments.length > 1 ? sourcemapSegments.slice(1).map((s, i) => formatPathSegment(s, false)).join('') : '');
+        const fullPath = 'game' + sourcemapSegments.map(s => formatPathSegment(s)).join('');
         this.fileToInstancePathCache.set(fsPath, fullPath);
         return fullPath;
       }
@@ -178,20 +195,20 @@ export class PathResolver {
       // Try Rojo project resolution
       const rojoSegments = this.resolveFromRojoProjectAsSegments(fsPath);
       if (rojoSegments && rojoSegments.length > 0) {
-        const fullPath = 'game' + rojoSegments.map((s, i) => formatPathSegment(s, false)).join('');
+        const fullPath = 'game' + rojoSegments.map(s => formatPathSegment(s)).join('');
         this.fileToInstancePathCache.set(fsPath, fullPath);
         return fullPath;
       }
 
       // Fallback to folder convention
       const conventionSegments = this.resolveFromConventionAsSegments(fsPath);
-      const fullPath = 'game' + conventionSegments.map((s, i) => formatPathSegment(s, false)).join('');
+      const fullPath = 'game' + conventionSegments.map(s => formatPathSegment(s)).join('');
       this.fileToInstancePathCache.set(fsPath, fullPath);
       return fullPath;
     } catch (error) {
       // Fallback to a simple path on error
-      const fileName = path.basename(fsPath).replace(/\.(server|client)?\.luau$/i, '');
-      const safePath = 'game' + formatPathSegment(fileName, false);
+      const fileName = path.basename(fsPath);
+      const safePath = 'game' + formatPathSegment(fileName);
       this.fileToInstancePathCache.set(fsPath, safePath);
       return safePath;
     }
@@ -367,8 +384,8 @@ export class PathResolver {
     for (let i = 0; i < segments.length; i++) {
       let segment = segments[i];
       
-      // Remove .luau extension and .server/.client suffixes
-      segment = segment.replace(/\.(server|client)?\.luau$/i, '');
+      // Remove all Lua/Luau extensions using the helper function
+      segment = stripLuaExtensions(segment);
       
       // Handle init files - they represent the parent folder, so skip them
       if (segment.toLowerCase() === 'init') {
@@ -460,7 +477,7 @@ export class PathResolver {
    */
   private getFileNameWithoutExtension(fsPath: string): string {
     const fileName = path.basename(fsPath);
-    return fileName.replace(/\.(luau|lua)$/i, '');
+    return stripLuaExtensions(fileName);
   }
 
   /**
@@ -468,5 +485,15 @@ export class PathResolver {
    */
   public clearCache(): void {
     this.fileToInstancePathCache.clear();
+  }
+
+  /**
+   * Dispose all resources and clear caches
+   */
+  public dispose(): void {
+    this.sourcemapCache.clear();
+    this.rojoProjectCache.clear();
+    this.fileToInstancePathCache.clear();
+    this.initialized = false;
   }
 }

@@ -145,6 +145,7 @@ export class ModuleIndexer {
       fsPath,
       instancePath,
       relativePath,
+      isWallyPackage,
     };
 
     this.modules.push(moduleInfo);
@@ -225,10 +226,13 @@ export class ModuleIndexer {
    */
   private disposeWatchers(): void {
     for (const disposable of this.watcherDisposables) {
-      disposable.dispose();
+      try {
+        disposable.dispose();
+      } catch (e) {
+        // Ignore disposal errors
+      }
     }
     this.watcherDisposables = [];
-    this.fileWatcher = undefined;
   }
 
   /**

@@ -17,6 +17,9 @@ export interface ModuleInfo {
   
   /** Relative path from workspace root */
   relativePath: string;
+  
+  /** Whether this is a Wally package (for capitalization) */
+  isWallyPackage?: boolean;
 }
 
 /**

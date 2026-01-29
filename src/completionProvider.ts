@@ -46,6 +46,11 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
     token: vscode.CancellationToken,
     context: vscode.CompletionContext
   ): vscode.ProviderResult<vscode.CompletionItem[] | vscode.CompletionList> {
+    // Check if request was cancelled
+    if (token.isCancellationRequested) {
+      return undefined;
+    }
+
     // Check if extension is enabled
     if (!this.config.enabled) {
       return undefined;
@@ -62,18 +67,23 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
       return undefined;
     }
 
+    // Check cancellation again before searching
+    if (token.isCancellationRequested) {
+      return undefined;
+    }
+
     const [fullMatch, leadingWhitespace, searchQuery] = match;
 
     // Perform fuzzy search
     const results = this.searchModules(searchQuery);
 
-    if (results.length === 0) {
+    if (results.length === 0 || token.isCancellationRequested) {
       return undefined;
     }
 
-    // Convert to completion items
-    const completionItems = results.map(moduleInfo => 
-      this.createCompletionItem(moduleInfo, document, position, leadingWhitespace, fullMatch, textBeforeCursor)
+    // Convert to completion items with proper sort index
+    const completionItems = results.map((moduleInfo, index) => 
+      this.createCompletionItem(moduleInfo, document, position, leadingWhitespace, fullMatch, textBeforeCursor, index)
     );
     
     // Mark as incomplete so VS Code re-queries as user types (enables fuzzy search)
@@ -134,13 +144,19 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
     position: vscode.Position,
     leadingWhitespace: string,
     fullMatch: string,
-    textBeforeCursor: string
+    textBeforeCursor: string,
+    sortIndex: number
   ): vscode.CompletionItem {
     // Sanitize name - remove any remaining extensions and make it a valid Lua identifier
     let varName = moduleInfo.name
       .replace(/\.(luau|lua|server|client)$/gi, '') // Remove extensions
       .replace(/[^a-zA-Z0-9_]/g, '_') // Replace invalid chars with underscore
       .replace(/^[0-9]/, '_$&'); // Prefix with _ if starts with number
+    
+    // Capitalize first letter for Wally packages
+    if (moduleInfo.isWallyPackage && varName.length > 0) {
+      varName = varName.charAt(0).toUpperCase() + varName.slice(1);
+    }
     
     const requireStatement = `local ${varName} = require(${moduleInfo.instancePath})`;
 
@@ -166,9 +182,8 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
     const endPos = position;
     item.range = new vscode.Range(startPos, endPos);
 
-    // Higher sort text = lower priority
-    // We want exact matches to appear first
-    item.sortText = moduleInfo.name;
+    // Use zero-padded index for consistent sort order (preserves our ranking)
+    item.sortText = String(sortIndex).padStart(5, '0');
 
     // Use the full text before cursor as filter text to prevent VS Code from re-filtering our fuzzy results
     item.filterText = textBeforeCursor;

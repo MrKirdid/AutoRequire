@@ -238,10 +238,16 @@ function loadConfiguration(): ExtensionConfig {
  * Extension deactivation
  */
 export function deactivate() {
+  // Dispose in reverse order of creation
   moduleIndexer?.dispose();
+  pathResolver?.dispose();
   
   for (const disposable of disposables) {
-    disposable.dispose();
+    try {
+      disposable.dispose();
+    } catch (e) {
+      // Ignore disposal errors
+    }
   }
 
   disposables = [];
