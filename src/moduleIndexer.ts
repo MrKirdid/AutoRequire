@@ -2,14 +2,15 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ModuleInfo } from './types';
 import { PathResolver } from './pathResolver';
+import { logger } from './logger';
 
 /**
- * Indexes and caches all Lua/Luau modules in the workspace
+ * Indexes and caches all Luau modules in the workspace
  */
 export class ModuleIndexer {
   private modules: ModuleInfo[] = [];
   private indexing: boolean = false;
-  private fileWatcher: vscode.FileSystemWatcher | undefined;
+  private watcherDisposables: vscode.Disposable[] = [];
 
   constructor(
     private workspaceFolders: readonly vscode.WorkspaceFolder[],
@@ -29,33 +30,40 @@ export class ModuleIndexer {
    */
   public async rebuildIndex(): Promise<void> {
     if (this.indexing) {
-      console.log('[Super Require] Index rebuild already in progress');
       return;
     }
 
     this.indexing = true;
     this.modules = [];
 
-    console.log('[Super Require] Starting module indexing...');
     const startTime = Date.now();
 
     try {
-      // Search for all .lua and .luau files
-      const files = await vscode.workspace.findFiles(
-        '**/*.{lua,luau}',
-        '**/node_modules/**' // Exclude node_modules
+      // Search for .luau files (Rojo standard) - exclude _Index (Wally internal)
+      const luauFiles = await vscode.workspace.findFiles(
+        '**/*.luau',
+        '{**/node_modules/**,**/_Index/**}'
       );
 
-      console.log(`[Super Require] Found ${files.length} Lua/Luau files`);
+      // Search for .lua files in Packages, ServerPackages, and DevPackages (Wally packages)
+      // Only get the top-level link files, not the _Index contents
+      const wallyPackageFiles = await vscode.workspace.findFiles(
+        '{**/Packages/*.lua,**/ServerPackages/*.lua,**/DevPackages/*.lua}',
+        '**/_Index/**'
+      );
 
-      for (const file of files) {
-        this.indexFile(file);
+      for (const file of luauFiles) {
+        this.indexFile(file, false);
+      }
+
+      for (const file of wallyPackageFiles) {
+        this.indexFile(file, true);
       }
 
       const duration = Date.now() - startTime;
-      console.log(`[Super Require] Indexed ${this.modules.length} modules in ${duration}ms`);
+      logger.info(`Indexed ${this.modules.length} modules in ${duration}ms`);
     } catch (error) {
-      console.error('[Super Require] Error during indexing:', error);
+      logger.error('Error during indexing', error);
     } finally {
       this.indexing = false;
     }
@@ -63,15 +71,61 @@ export class ModuleIndexer {
 
   /**
    * Index a single file
+   * @param uri The file URI
+   * @param isWallyPackage Whether this is a Wally package link file
    */
-  private indexFile(uri: vscode.Uri): void {
+  private indexFile(uri: vscode.Uri, isWallyPackage: boolean = false): void {
     const fsPath = uri.fsPath;
     const fileName = path.basename(fsPath);
-    const name = fileName.replace(/\.(lua|luau)$/, '');
-
-    // Skip init files or files starting with dot
-    if (name.toLowerCase() === 'init' || fileName.startsWith('.')) {
+    
+    // Skip files starting with dot
+    if (fileName.startsWith('.')) {
       return;
+    }
+
+    // Skip _Index folder contents (Wally internal)
+    if (fsPath.includes(`${path.sep}_Index${path.sep}`) || fsPath.includes('/_Index/')) {
+      return;
+    }
+
+    // Skip server and client scripts - they can't be required (they're Script/LocalScript, not ModuleScript)
+    // But allow init.server.luau and init.client.luau as they represent the parent folder
+    const lowerFileName = fileName.toLowerCase();
+    const isServerScript = (lowerFileName.endsWith('.server.luau') || lowerFileName.endsWith('.server.lua')) && !lowerFileName.startsWith('init.');
+    const isClientScript = (lowerFileName.endsWith('.client.luau') || lowerFileName.endsWith('.client.lua')) && !lowerFileName.startsWith('init.');
+    if (isServerScript || isClientScript) {
+      return;
+    }
+
+    // Remove extensions: .server.luau, .client.luau, .luau, .lua
+    let nameWithoutExt = fileName;
+    if (nameWithoutExt.toLowerCase().endsWith('.server.luau')) {
+      nameWithoutExt = nameWithoutExt.slice(0, -12);
+    } else if (nameWithoutExt.toLowerCase().endsWith('.client.luau')) {
+      nameWithoutExt = nameWithoutExt.slice(0, -12);
+    } else if (nameWithoutExt.toLowerCase().endsWith('.server.lua')) {
+      nameWithoutExt = nameWithoutExt.slice(0, -11);
+    } else if (nameWithoutExt.toLowerCase().endsWith('.client.lua')) {
+      nameWithoutExt = nameWithoutExt.slice(0, -11);
+    } else if (nameWithoutExt.toLowerCase().endsWith('.luau')) {
+      nameWithoutExt = nameWithoutExt.slice(0, -5);
+    } else if (nameWithoutExt.toLowerCase().endsWith('.lua')) {
+      nameWithoutExt = nameWithoutExt.slice(0, -4);
+    }
+
+    // Handle init.luau/init.lua files - use parent folder name as module name
+    let name: string;
+    if (nameWithoutExt.toLowerCase() === 'init') {
+      // Get parent folder name as the module name
+      const parentDir = path.dirname(fsPath);
+      name = path.basename(parentDir);
+    } else {
+      name = nameWithoutExt;
+    }
+    
+    // Safety: ensure name doesn't have any remaining extension
+    if (name.includes('.')) {
+      name = name.replace(/\.(luau|lua|server|client)$/i, '');
     }
 
     // Find workspace folder for relative path
@@ -91,6 +145,7 @@ export class ModuleIndexer {
       fsPath,
       instancePath,
       relativePath,
+      isWallyPackage,
     };
 
     this.modules.push(moduleInfo);
@@ -100,32 +155,84 @@ export class ModuleIndexer {
    * Set up file system watcher for dynamic updates
    */
   private setupFileWatcher(): void {
-    // Watch for .lua and .luau file changes
-    this.fileWatcher = vscode.workspace.createFileSystemWatcher(
-      '**/*.{lua,luau}'
+    // Dispose any existing watchers first
+    this.disposeWatchers();
+
+    // Watch for .luau file changes (Rojo standard)
+    const luauWatcher = vscode.workspace.createFileSystemWatcher(
+      '**/*.luau'
     );
 
-    // File created
-    this.fileWatcher.onDidCreate((uri) => {
-      console.log(`[Super Require] File created: ${uri.fsPath}`);
-      this.indexFile(uri);
+    // Watch for .lua file changes in Packages/ServerPackages/DevPackages (Wally)
+    const luaWatcher = vscode.workspace.createFileSystemWatcher(
+      '{**/Packages/*.lua,**/ServerPackages/*.lua,**/DevPackages/*.lua}'
+    );
+
+    // Helper to check if file should be indexed
+    const shouldIndex = (uri: vscode.Uri): boolean => {
+      const fsPath = uri.fsPath;
+      // Skip _Index folder
+      if (fsPath.includes(`${path.sep}_Index${path.sep}`) || fsPath.includes('/_Index/')) {
+        return false;
+      }
+      return true;
+    };
+
+    // .luau file handlers
+    const luauCreateDisposable = luauWatcher.onDidCreate((uri) => {
+      if (shouldIndex(uri)) {
+        this.indexFile(uri, false);
+      }
     });
 
-    // File deleted
-    this.fileWatcher.onDidDelete((uri) => {
-      console.log(`[Super Require] File deleted: ${uri.fsPath}`);
+    const luauDeleteDisposable = luauWatcher.onDidDelete((uri) => {
       this.modules = this.modules.filter(m => m.fsPath !== uri.fsPath);
     });
 
-    // File changed (might be renamed or moved)
-    this.fileWatcher.onDidChange((uri) => {
-      console.log(`[Super Require] File changed: ${uri.fsPath}`);
-      // Remove old entry and re-index
-      this.modules = this.modules.filter(m => m.fsPath !== uri.fsPath);
-      this.indexFile(uri);
+    const luauChangeDisposable = luauWatcher.onDidChange((uri) => {
+      if (shouldIndex(uri)) {
+        this.modules = this.modules.filter(m => m.fsPath !== uri.fsPath);
+        this.indexFile(uri, false);
+      }
     });
 
-    console.log('[Super Require] File watcher activated');
+    // .lua file handlers (Wally packages)
+    const luaCreateDisposable = luaWatcher.onDidCreate((uri) => {
+      if (shouldIndex(uri)) {
+        this.indexFile(uri, true);
+      }
+    });
+
+    const luaDeleteDisposable = luaWatcher.onDidDelete((uri) => {
+      this.modules = this.modules.filter(m => m.fsPath !== uri.fsPath);
+    });
+
+    const luaChangeDisposable = luaWatcher.onDidChange((uri) => {
+      if (shouldIndex(uri)) {
+        this.modules = this.modules.filter(m => m.fsPath !== uri.fsPath);
+        this.indexFile(uri, true);
+      }
+    });
+
+    // Store all disposables for proper cleanup
+    this.watcherDisposables.push(
+      luauWatcher, luauCreateDisposable, luauDeleteDisposable, luauChangeDisposable,
+      luaWatcher, luaCreateDisposable, luaDeleteDisposable, luaChangeDisposable
+    );
+  }
+
+  /**
+   * Dispose file watchers
+   */
+  private disposeWatchers(): void {
+    for (const disposable of this.watcherDisposables) {
+      try {
+        disposable.dispose();
+      } catch (e) {
+        // Ignore disposal errors
+      }
+    }
+    this.watcherDisposables = [];
   }
 
   /**
@@ -146,7 +253,7 @@ export class ModuleIndexer {
    * Dispose resources
    */
   public dispose(): void {
-    this.fileWatcher?.dispose();
+    this.disposeWatchers();
     this.modules = [];
   }
 }

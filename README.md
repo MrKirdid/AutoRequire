@@ -1,8 +1,53 @@
 # 🚀 Roblox Super Require Autocomplete
 
-**Intelligent `require()` autocomplete for Roblox Lua/Luau projects** with blazing-fast fuzzy search and automatic path resolution.
+**Intelligent `require()` autocomplete for Roblox Luau projects** with blazing-fast fuzzy search and automatic path resolution using Rojo project structure.
 
 Never manually type `require()` statements again! Just type `:` at the start of a line, search for your module, and let the extension do the rest.
+
+---
+
+## 🚀 Quick Start (5 Minutes)
+
+### Step 1: Download & Build
+
+Open a terminal (Command Prompt or PowerShell) and run these commands:
+
+```bash
+# Clone the repository
+git clone https://github.com/MrKirdid/vscode-roblox-super-require.git
+
+# Enter the folder
+cd vscode-roblox-super-require
+
+# Install dependencies
+npm install
+
+# Compile the extension
+npm run compile
+
+# Package as VSIX file
+npx vsce package
+```
+
+This creates a file called `roblox-super-require-1.0.0.vsix` in the folder.
+
+### Step 2: Install in VS Code
+
+1. Open VS Code
+2. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
+3. Type **"Install from VSIX"** and select it
+4. Navigate to the folder and select `roblox-super-require-1.0.0.vsix`
+5. Click **Reload** when prompted
+
+### Step 3: Use It!
+
+1. Open any `.luau` file in your Rojo project
+2. Go to the **start of an empty line**
+3. Type `:` followed by part of a module name (e.g., `:jan`)
+4. Select from the autocomplete dropdown
+5. It inserts: `local Janitor = require(game.ReplicatedStorage.Shared.Packages.Janitor)`
+
+**That's it! 🎉**
 
 ---
 
@@ -18,9 +63,11 @@ Never manually type `require()` statements again! Just type `:` at the start of 
 - Type partial names: `:Jan` matches `Janitor`
 - Searches both module names and file paths
 - Handles hundreds of modules without lag
+- **Only searches `.luau` files** (Rojo standard)
 
 ### 🛤️ Automatic Path Resolution
-- **Primary:** Reads `sourcemap.json` (Rojo projects)
+- **Primary:** Reads `default.project.json` (Rojo project files)
+- **Secondary:** Reads `sourcemap.json` (Rojo sourcemap)
 - **Fallback:** Uses intelligent folder naming conventions
 - Recognizes common Roblox services:
   - `ReplicatedStorage`
@@ -28,58 +75,23 @@ Never manually type `require()` statements again! Just type `:` at the start of 
   - `ServerStorage`
   - `StarterPlayer`, `StarterGui`
   - And more!
+- Generates paths with `game.` prefix (e.g., `game.ReplicatedStorage.Packages.Janitor`)
+
+### 📁 init.luau Support
+- Properly handles `init.luau` files (Rojo convention)
+- Uses the **parent folder name** as the module name
+- Supports `init.server.luau` and `init.client.luau` variants
 
 ### ⚡ Performance
-- Indexes all modules at startup
+- Indexes all `.luau` modules at startup
 - Caches results for instant suggestions
 - Watches for file changes and updates automatically
 - No noticeable lag even with large projects
 
 ### 📝 Smart Insertion
-- Automatically generates: `local <ModuleName> = require(<InstancePath>)`
+- Automatically generates: `local <ModuleName> = require(game.<InstancePath>)`
 - Replaces the `:` and search query seamlessly
 - Shows full paths in autocomplete for disambiguation
-
----
-
-## 📦 Installation
-
-### Option 1: Install from VSIX (Recommended)
-
-1. Download the `.vsix` file from releases
-2. Open VS Code
-3. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
-4. Type "Install from VSIX" and select it
-5. Choose the downloaded `.vsix` file
-6. Reload VS Code
-
-### Option 2: Install from Source
-
-1. **Clone or download this repository**
-   ```bash
-   git clone https://github.com/MrKirdid/vscode-roblox-super-require.git
-   cd vscode-roblox-super-require
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Compile TypeScript**
-   ```bash
-   npm run compile
-   ```
-
-4. **Package the extension** (optional)
-   ```bash
-   npm install -g @vscode/vsce
-   vsce package
-   ```
-
-5. **Install in VS Code**
-   - Press `F5` to open a new VS Code window with the extension loaded (for development)
-   - Or install the generated `.vsix` file using the method above
 
 ---
 
@@ -95,13 +107,17 @@ Never manually type `require()` statements again! Just type `:` at the start of 
 
 ### Example Workflow
 
-**File structure:**
+**File structure (Rojo project):**
 ```
-ReplicatedStorage/
-  Packages/
-    Janitor.lua
-    Signal.lua
-    Promise.lua
+src/
+  shared/
+    Packages/
+      Janitor.luau
+      Signal.luau
+      Promise.luau
+    Utils/
+      init.luau       <-- This becomes "Utils" module
+      Helper.luau
 ```
 
 **In your code:**
@@ -110,22 +126,22 @@ ReplicatedStorage/
 :Jan
 
 -- Autocomplete shows:
--- Janitor - ReplicatedStorage.Packages.Janitor
+-- Janitor - game.ReplicatedStorage.Shared.Packages.Janitor
 
 -- Press Enter, and it becomes:
-local Janitor = require(ReplicatedStorage.Packages.Janitor)
+local Janitor = require(game.ReplicatedStorage.Shared.Packages.Janitor)
 ```
 
-**Another example:**
+**Another example with init.luau:**
 ```lua
 -- Type:
-:Sig
+:Utils
 
 -- Autocomplete shows:
--- Signal - ReplicatedStorage.Packages.Signal
+-- Utils - game.ReplicatedStorage.Shared.Utils
 
 -- Result:
-local Signal = require(ReplicatedStorage.Packages.Signal)
+local Utils = require(game.ReplicatedStorage.Shared.Utils)
 ```
 
 ---
@@ -151,16 +167,41 @@ Open VS Code settings (`Ctrl+,` or `Cmd+,`) and search for "Roblox Super Require
 
 ---
 
-## 🗂️ Sourcemap Support
+## 🗂️ Rojo Project Support
 
 This extension works seamlessly with [Rojo](https://rojo.space/) projects!
 
-If you have a `sourcemap.json` in your workspace root, the extension will:
+### default.project.json
+
+The extension reads your `default.project.json` to accurately resolve Roblox Instance paths. Example project file:
+
+```json
+{
+  "name": "my-game",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": {
+        "$path": "src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "Server": {
+        "$path": "src/server"
+      }
+    }
+  }
+}
+```
+
+### sourcemap.json
+
+If you have a `sourcemap.json` in your workspace root (generated by Rojo), the extension will:
 - Read the Rojo sourcemap structure
 - Resolve accurate Roblox Instance paths
 - Automatically update when `sourcemap.json` changes
 
-**No sourcemap?** No problem! The extension falls back to intelligent folder naming conventions.
+**No project files?** No problem! The extension falls back to intelligent folder naming conventions.
 
 ---
 
@@ -181,12 +222,12 @@ Access commands via `Ctrl+Shift+P` (or `Cmd+Shift+P`):
 
 ### Modules not found?
 - Run the "Reindex Modules" command
-- Check that your files have `.lua` or `.luau` extensions
+- Check that your files have `.luau` extensions
 - Ensure you have a workspace folder open
 
 ### Wrong paths?
-- Add a `sourcemap.json` to your project root
-- Check that your folder structure follows Roblox conventions
+- Add a `default.project.json` to your project root
+- Check that your folder structure follows Rojo conventions
 - Rebuild the index after moving files
 
 ---
@@ -204,7 +245,8 @@ Access commands via `Ctrl+Shift+P` (or `Cmd+Shift+P`):
 
 - **VS Code:** 1.75.0 or higher
 - **Language:** Lua or Luau files
-- **Optional:** Rojo project with `sourcemap.json`
+- **Files:** `.luau` extension for your modules
+- **Optional:** Rojo project with `default.project.json`
 
 ---
 
@@ -227,7 +269,7 @@ MIT License - See LICENSE file for details
 
 - Built with [VS Code Extension API](https://code.visualstudio.com/api)
 - Fuzzy search powered by [Fuse.js](https://fusejs.io/)
-- Inspired by the Roblox development community
+- Inspired by the Roblox development community and [Rojo](https://rojo.space/)
 
 ---
 
