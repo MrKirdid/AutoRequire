@@ -1,174 +1,192 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import Fuse from 'fuse.js';
 import { ModuleIndexer } from './moduleIndexer';
-import { ModuleInfo, ExtensionConfig, ModuleType } from './types';
+import { ModuleInfo, ExtensionConfig, DefinedVariable } from './types';
+import { fuzzyMatch, rankMatches, FuzzyMatchOptions } from './fuzzyMatcher';
 
 /**
  * Provides autocomplete suggestions for require statements
  */
 export class RequireCompletionProvider implements vscode.CompletionItemProvider {
-  private fuse: Fuse<ModuleInfo> | null = null;
-
   constructor(
     private moduleIndexer: ModuleIndexer,
     private config: ExtensionConfig
-  ) {
-    this.updateFuseIndex();
-  }
+  ) {}
+
+  public updateFuseIndex(): void {}
 
   /**
-   * Update the Fuse.js search index
-   */
-  public updateFuseIndex(): void {
-    const modules = this.moduleIndexer.getModules();
-    
-    this.fuse = new Fuse(modules, {
-      keys: [
-        { name: 'name', weight: 3 },      // Prioritize module name heavily
-        { name: 'relativePath', weight: 1 } // Secondary: search in path
-      ],
-      threshold: 0.6, // Higher = more fuzzy (0.6 is quite lenient)
-      includeScore: true,
-      minMatchCharLength: 1,
-      ignoreLocation: true, // Allow matches anywhere in the string
-      useExtendedSearch: false,
-      findAllMatches: true, // Don't stop at first match
-      shouldSort: true,
-    });
-  }
-
-  /**
-   * Extract already-defined service/require variables from the document
-   * Returns a map of service name (e.g., "ReplicatedStorage") to variable name (e.g., "ReplicatedStorage" or "RS")
+   * Extract defined service variables from the document
    */
   private extractDefinedServices(document: vscode.TextDocument): Map<string, string> {
     const services = new Map<string, string>();
     const text = document.getText();
     
-    // Match patterns like:
-    // local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    // local RS = game:GetService("ReplicatedStorage")
-    // local ReplicatedStorage = game.ReplicatedStorage
-    // local RS = game.ReplicatedStorage
+    // Match: local X = game:GetService("Service") or local X = game.Service
     const getServicePattern = /local\s+(\w+)\s*=\s*game:GetService\s*\(\s*["'](\w+)["']\s*\)/g;
     const dotAccessPattern = /local\s+(\w+)\s*=\s*game\.(\w+)\s*(?:$|[\r\n;])/gm;
     
     let match;
     while ((match = getServicePattern.exec(text)) !== null) {
-      const [, varName, serviceName] = match;
-      services.set(serviceName, varName);
+      services.set(match[2], match[1]);
     }
-    
     while ((match = dotAccessPattern.exec(text)) !== null) {
-      const [, varName, serviceName] = match;
-      // Only add if it looks like a service (PascalCase)
-      if (/^[A-Z]/.test(serviceName)) {
-        services.set(serviceName, varName);
+      if (/^[A-Z]/.test(match[2])) {
+        services.set(match[2], match[1]);
       }
     }
-    
     return services;
   }
 
   /**
-   * Get the current script's instance path based on the document's file path
+   * Extract all defined instance variables
+   */
+  private extractDefinedVariables(document: vscode.TextDocument): DefinedVariable[] {
+    const variables: DefinedVariable[] = [];
+    const text = document.getText();
+    const serviceVars = new Map<string, { varName: string; instancePath: string; lineIndex: number }>();
+    
+    // Match game:GetService patterns
+    const getServicePattern = /local\s+(\w+)\s*=\s*game:GetService\s*\(\s*["'](\w+)["']\s*\)/g;
+    let match;
+    while ((match = getServicePattern.exec(text)) !== null) {
+      const [, varName, serviceName] = match;
+      const lineIndex = text.substring(0, match.index).split('\n').length - 1;
+      const instancePath = `game.${serviceName}`;
+      serviceVars.set(varName, { varName, instancePath, lineIndex });
+      variables.push({ varName, instancePath, depth: 2, lineIndex });
+    }
+    
+    // Match game.Service patterns
+    const dotAccessPattern = /local\s+(\w+)\s*=\s*game\.(\w+)\s*(?:$|[\r\n;])/gm;
+    while ((match = dotAccessPattern.exec(text)) !== null) {
+      const [, varName, serviceName] = match;
+      if (/^[A-Z]/.test(serviceName) && !serviceVars.has(varName)) {
+        const lineIndex = text.substring(0, match.index).split('\n').length - 1;
+        const instancePath = `game.${serviceName}`;
+        serviceVars.set(varName, { varName, instancePath, lineIndex });
+        variables.push({ varName, instancePath, depth: 2, lineIndex });
+      }
+    }
+    
+    // Match nested paths: local X = OtherVar.Path.To.Thing
+    const varRefPattern = /local\s+(\w+)\s*=\s*(\w+)((?:\.\w+|\["[^"]+"\])+)/g;
+    while ((match = varRefPattern.exec(text)) !== null) {
+      const [, newVarName, baseVarName, pathPart] = match;
+      const baseVar = serviceVars.get(baseVarName);
+      if (baseVar) {
+        const lineIndex = text.substring(0, match.index).split('\n').length - 1;
+        let additionalPath = '';
+        const dotMatches = pathPart.matchAll(/\.(\w+)/g);
+        for (const dm of dotMatches) additionalPath += `.${dm[1]}`;
+        const bracketMatches = pathPart.matchAll(/\[["']([^"']+)["']\]/g);
+        for (const bm of bracketMatches) {
+          additionalPath += /^[a-zA-Z_]\w*$/.test(bm[1]) ? `.${bm[1]}` : `["${bm[1]}"]`;
+        }
+        if (additionalPath) {
+          const instancePath = baseVar.instancePath + additionalPath;
+          const depth = instancePath.split(/\.|\[/).length;
+          serviceVars.set(newVarName, { varName: newVarName, instancePath, lineIndex });
+          variables.push({ varName: newVarName, instancePath, depth, lineIndex });
+        }
+      }
+    }
+    
+    variables.sort((a, b) => b.depth - a.depth);
+    return variables;
+  }
+
+  /**
+   * Get current script's instance path
    */
   private getCurrentScriptPath(document: vscode.TextDocument): string | null {
-    const currentModule = this.moduleIndexer.getModules().find(
-      m => m.fsPath === document.uri.fsPath
-    );
+    const currentModule = this.moduleIndexer.getModules().find(m => m.fsPath === document.uri.fsPath);
     return currentModule?.instancePath || null;
   }
 
   /**
-   * Try to generate a relative path (script.Parent, script.Child, etc.)
-   * Returns null if no relative path is applicable
+   * Try to generate a relative path (script.Parent based)
    */
   private getRelativePath(currentPath: string, targetPath: string): string | null {
-    // Parse instance paths like "game.ReplicatedStorage.Modules.CraftingModule"
+    if (this.config.pathStyle === 'absolute') return null;
+    
     const currentParts = currentPath.split('.');
     const targetParts = targetPath.split('.');
     
-    // Both should start with "game"
-    if (currentParts[0] !== 'game' || targetParts[0] !== 'game') {
-      return null;
-    }
+    if (currentParts[0] !== 'game' || targetParts[0] !== 'game') return null;
     
-    // Find common prefix
     let commonLength = 0;
     for (let i = 0; i < Math.min(currentParts.length, targetParts.length); i++) {
-      if (currentParts[i] === targetParts[i]) {
-        commonLength = i + 1;
-      } else {
-        break;
-      }
+      if (currentParts[i] === targetParts[i]) commonLength = i + 1;
+      else break;
     }
     
-    // Need at least "game.ServiceName" in common (2 parts)
-    if (commonLength < 2) {
-      return null;
-    }
+    if (commonLength < 2) return null;
     
-    // Calculate how many .Parent we need to go up from current
     const parentsNeeded = currentParts.length - commonLength;
-    
-    // Calculate what children we need to access from there
     const childrenNeeded = targetParts.slice(commonLength);
     
-    // Build the relative path
-    let relativePath = 'script';
+    if (parentsNeeded > 3) return null; // Max 3 parents
     
-    // Add .Parent for each level we need to go up
-    for (let i = 0; i < parentsNeeded; i++) {
-      relativePath += '.Parent';
+    let relativePath = 'script';
+    for (let i = 0; i < parentsNeeded; i++) relativePath += '.Parent';
+    for (const child of childrenNeeded) {
+      relativePath += /^[a-zA-Z_]\w*$/.test(child) ? `.${child}` : `["${child}"]`;
     }
     
-    // Add children
-    for (const child of childrenNeeded) {
-      // Handle bracket notation if needed
-      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(child)) {
-        relativePath += `.${child}`;
-      } else {
-        relativePath += `["${child}"]`;
+    return relativePath;
+  }
+
+  /**
+   * Find deepest matching variable for path
+   */
+  private findDeepestMatchingVariable(instancePath: string, definedVariables: DefinedVariable[]): { varName: string; remainingPath: string } | null {
+    const normalizedTarget = instancePath.toLowerCase();
+    
+    for (const variable of definedVariables) {
+      const normalizedVarPath = variable.instancePath.toLowerCase();
+      if (normalizedTarget.startsWith(normalizedVarPath)) {
+        const remaining = instancePath.substring(variable.instancePath.length);
+        if (remaining === '' || remaining.startsWith('.') || remaining.startsWith('[')) {
+          return { varName: variable.varName, remainingPath: remaining };
+        }
       }
     }
-    
-    // Only return relative path if it's actually shorter or makes sense
-    // (e.g., don't return script.Parent.Parent.Parent.Parent.Parent...)
-    if (parentsNeeded > 3) {
-      return null; // Too many parents, use absolute path
-    }
-    
-    // If the target is a direct child of current script, use script.ChildName
-    if (parentsNeeded === 0 && childrenNeeded.length > 0) {
-      return relativePath;
-    }
-    
-    // If target is sibling (same parent) or nearby, use relative
-    if (parentsNeeded <= 2) {
-      return relativePath;
-    }
-    
     return null;
   }
 
   /**
-   * Replace service references in path with defined variable names
+   * Build the best require path
    */
-  private replaceServicesWithVariables(instancePath: string, definedServices: Map<string, string>): string {
-    // Parse the path: game.ServiceName.Rest.Of.Path
-    const match = instancePath.match(/^game\.(\w+)(\..*)?$/);
-    if (!match) {
-      return instancePath;
+  private buildRequirePath(
+    moduleInfo: ModuleInfo,
+    definedServices: Map<string, string>,
+    definedVariables: DefinedVariable[],
+    currentScriptPath: string | null
+  ): string {
+    const instancePath = moduleInfo.instancePath;
+    
+    // Try deepest matching variable first
+    const deepMatch = this.findDeepestMatchingVariable(instancePath, definedVariables);
+    if (deepMatch) {
+      return deepMatch.varName + deepMatch.remainingPath;
     }
     
-    const [, serviceName, restOfPath] = match;
+    // Try relative path
+    if (currentScriptPath && this.config.pathStyle !== 'absolute') {
+      const relativePath = this.getRelativePath(currentScriptPath, instancePath);
+      if (relativePath) return relativePath;
+    }
     
-    // Check if this service is already defined
-    const varName = definedServices.get(serviceName);
-    if (varName) {
-      return varName + (restOfPath || '');
+    // Try service variable
+    const match = instancePath.match(/^game\.(\w+)(\..*)?$/);
+    if (match) {
+      const varName = definedServices.get(match[1]);
+      if (varName) return varName + (match[2] || '');
+    }
+    
+    // Use GetService if configured
+    if (this.config.useGetService && match) {
+      return `game:GetService("${match[1]}")${match[2] || ''}`;
     }
     
     return instancePath;
@@ -180,346 +198,164 @@ export class RequireCompletionProvider implements vscode.CompletionItemProvider 
   public provideCompletionItems(
     document: vscode.TextDocument,
     position: vscode.Position,
-    token: vscode.CancellationToken,
-    context: vscode.CompletionContext
+    token: vscode.CancellationToken
   ): vscode.ProviderResult<vscode.CompletionItem[] | vscode.CompletionList> {
-    // Check if request was cancelled
-    if (token.isCancellationRequested) {
-      return undefined;
-    }
-
-    // Check if extension is enabled
-    if (!this.config.enabled) {
-      return undefined;
-    }
+    if (token.isCancellationRequested || !this.config.enabled) return undefined;
 
     const lineText = document.lineAt(position).text;
     const textBeforeCursor = lineText.substring(0, position.character);
 
-    // Check if we're at the start of a line with the trigger character
-    // Pattern: optional whitespace, then trigger char, then optional characters (search query)
-    const triggerChar = this.config.triggerCharacter || ':';
-    const escapedTrigger = triggerChar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(`^(\\s*)${escapedTrigger}(.*)$`);
-    const match = pattern.exec(textBeforeCursor);
-    
-    if (!match) {
-      return undefined;
-    }
-
-    // Check cancellation again before searching
-    if (token.isCancellationRequested) {
-      return undefined;
-    }
+    // Check for trigger pattern: whitespace + : + optional search query
+    const match = /^(\s*):(.*)$/.exec(textBeforeCursor);
+    if (!match) return undefined;
 
     const [fullMatch, leadingWhitespace, searchQuery] = match;
-
-    // Extract already-defined services from the document
-    const definedServices = this.extractDefinedServices(document);
     
-    // Get current script's path for relative path calculation
+    const definedServices = this.extractDefinedServices(document);
+    const definedVariables = this.extractDefinedVariables(document);
     const currentScriptPath = this.getCurrentScriptPath(document);
 
-    // Perform fuzzy search
     const results = this.searchModules(searchQuery);
+    if (results.length === 0) return undefined;
 
-    if (results.length === 0 || token.isCancellationRequested) {
-      return undefined;
-    }
-
-    // Convert to completion items with proper sort index
     const completionItems = results.map((moduleInfo, index) => 
-      this.createCompletionItem(moduleInfo, document, position, leadingWhitespace, fullMatch, textBeforeCursor, index, definedServices, currentScriptPath)
+      this.createCompletionItem(moduleInfo, position, leadingWhitespace, textBeforeCursor, index, definedServices, definedVariables, currentScriptPath)
     );
     
-    // Mark as incomplete so VS Code re-queries as user types (enables fuzzy search)
     return new vscode.CompletionList(completionItems, true);
   }
 
   /**
-   * Search for modules using fuzzy search
+   * Search modules with fuzzy matching
    */
   private searchModules(query: string): ModuleInfo[] {
-    let allModules = this.moduleIndexer.getModules();
+    const allModules = this.moduleIndexer.getModules();
     
-    // If preferWallyPackages is enabled, sort Wally packages first
-    if (this.config.preferWallyPackages) {
-      allModules = [...allModules].sort((a, b) => {
-        if (a.isWallyPackage && !b.isWallyPackage) return -1;
-        if (!a.isWallyPackage && b.isWallyPackage) return 1;
-        return 0;
-      });
-    }
-    
-    // If query is empty, return all modules (limited by maxSuggestions)
     if (!query || query.trim() === '') {
       return allModules.slice(0, this.config.maxSuggestions);
     }
 
     const queryLower = query.toLowerCase();
     
-    // First, try simple substring matching (often better than fuzzy for code)
-    const substringMatches = allModules.filter(m => 
-      m.name.toLowerCase().includes(queryLower) ||
-      m.relativePath.toLowerCase().includes(queryLower)
-    );
+    // Fast path: exact, prefix, substring matches
+    const exactMatches: ModuleInfo[] = [];
+    const prefixMatches: ModuleInfo[] = [];
+    const substringMatches: ModuleInfo[] = [];
     
-    // Sort substring matches: exact start match first, then by name length
-    substringMatches.sort((a, b) => {
-      const aStartsWith = a.name.toLowerCase().startsWith(queryLower);
-      const bStartsWith = b.name.toLowerCase().startsWith(queryLower);
-      if (aStartsWith && !bStartsWith) return -1;
-      if (!aStartsWith && bStartsWith) return 1;
-      
-      // If preferWallyPackages, keep that priority
-      if (this.config.preferWallyPackages) {
-        if (a.isWallyPackage && !b.isWallyPackage) return -1;
-        if (!a.isWallyPackage && b.isWallyPackage) return 1;
-      }
-      
-      return a.name.length - b.name.length;
-    });
+    for (const module of allModules) {
+      const nameLower = module.name.toLowerCase();
+      if (nameLower === queryLower) exactMatches.push(module);
+      else if (nameLower.startsWith(queryLower)) prefixMatches.push(module);
+      else if (nameLower.includes(queryLower)) substringMatches.push(module);
+    }
     
+    if (exactMatches.length > 0) return exactMatches.slice(0, this.config.maxSuggestions);
+    if (prefixMatches.length > 0) {
+      prefixMatches.sort((a, b) => a.name.length - b.name.length);
+      return prefixMatches.slice(0, this.config.maxSuggestions);
+    }
     if (substringMatches.length > 0) {
+      substringMatches.sort((a, b) => a.name.length - b.name.length);
       return substringMatches.slice(0, this.config.maxSuggestions);
     }
     
-    // Fall back to fuzzy search if no substring matches
-    if (!this.fuse) {
-      return [];
-    }
-
-    const results = this.fuse.search(query);
-
-    // Extract items and limit results
-    return results
-      .map(result => result.item)
+    // Fuzzy matching based on strength setting
+    const minScore = this.config.fuzzyMatchStrength === 'strict' ? 0.5 
+      : this.config.fuzzyMatchStrength === 'loose' ? 0.2 : 0.35;
+    
+    const fuzzyOptions: Partial<FuzzyMatchOptions> = {
+      minScore,
+      allowVeryFuzzy: this.config.fuzzyMatchStrength === 'loose',
+    };
+    
+    const rankedResults = rankMatches(query, allModules, (m) => [m.name, m.relativePath], fuzzyOptions);
+    
+    return rankedResults
+      .filter(r => r.score >= minScore)
+      .map(r => r.item)
       .slice(0, this.config.maxSuggestions);
   }
 
   /**
-   * Get the appropriate VS Code icon for a module based on its type and path
+   * Get icon for module
    */
   private getModuleIcon(moduleInfo: ModuleInfo): vscode.CompletionItemKind {
-    if (!this.config.showModuleIcons) {
-      return vscode.CompletionItemKind.Module;
-    }
-
     const nameLower = moduleInfo.name.toLowerCase();
     const pathLower = moduleInfo.instancePath.toLowerCase();
     
-    // Wally packages get a special package icon
-    if (moduleInfo.isWallyPackage) {
-      return vscode.CompletionItemKind.Reference; // Package-like appearance
-    }
-    
-    // Service modules (including Units)
-    if (nameLower.endsWith('service') || nameLower.includes('service') || 
-        pathLower.includes('units') || pathLower.includes('/units/')) {
-      return vscode.CompletionItemKind.Interface; // Service icon
-    }
-    
-    // Controller modules (including Units)
-    if (nameLower.endsWith('controller') || nameLower.includes('controller')) {
-      return vscode.CompletionItemKind.Class; // Controller icon
-    }
-    
-    // Component modules
-    if (nameLower.endsWith('component') || nameLower.includes('component')) {
-      return vscode.CompletionItemKind.Struct; // Component icon
-    }
-    
-    // Utility modules
-    if (nameLower.includes('util') || nameLower.includes('helper') || nameLower.includes('lib')) {
-      return vscode.CompletionItemKind.Function; // Utility icon
-    }
-    
-    // Server modules
-    if (pathLower.includes('serverscriptservice') || pathLower.includes('serverstorage')) {
-      return vscode.CompletionItemKind.Event; // Server icon (orange)
-    }
-    
-    // Client modules
-    if (pathLower.includes('starterplayerscripts') || pathLower.includes('startergui') || 
-        pathLower.includes('replicatedfirst')) {
-      return vscode.CompletionItemKind.User; // Client icon (blue person)
-    }
-    
-    // Shared modules (ReplicatedStorage)
-    if (pathLower.includes('replicatedstorage')) {
-      return vscode.CompletionItemKind.Constant; // Shared icon
-    }
-    
-    // Types/Interfaces
-    if (nameLower.endsWith('types') || nameLower.endsWith('type') || nameLower.startsWith('types')) {
-      return vscode.CompletionItemKind.TypeParameter;
-    }
-    
-    // Config modules
-    if (nameLower.includes('config') || nameLower.includes('settings') || nameLower.includes('constants')) {
-      return vscode.CompletionItemKind.Value;
-    }
-    
-    // Default module icon
+    if (moduleInfo.isWallyPackage) return vscode.CompletionItemKind.Reference;
+    if (nameLower.includes('service')) return vscode.CompletionItemKind.Interface;
+    if (nameLower.includes('controller')) return vscode.CompletionItemKind.Class;
+    if (nameLower.includes('component')) return vscode.CompletionItemKind.Struct;
+    if (nameLower.includes('util') || nameLower.includes('helper')) return vscode.CompletionItemKind.Function;
+    if (pathLower.includes('serverscriptservice') || pathLower.includes('serverstorage')) return vscode.CompletionItemKind.Event;
+    if (pathLower.includes('starterplayerscripts') || pathLower.includes('startergui')) return vscode.CompletionItemKind.User;
+    if (pathLower.includes('replicatedstorage')) return vscode.CompletionItemKind.Constant;
     return vscode.CompletionItemKind.Module;
   }
 
   /**
-   * Get a descriptive label/tag for the module type
+   * Get module type tag
    */
   private getModuleTag(moduleInfo: ModuleInfo): string {
     const nameLower = moduleInfo.name.toLowerCase();
     const pathLower = moduleInfo.instancePath.toLowerCase();
     
-    if (moduleInfo.isWallyPackage) return 'Wally Package';
-    
-    // Check for Units folder (used for services/controllers)
-    if (pathLower.includes('.units.') || pathLower.includes('/units/')) {
-      // Determine if it's a server or client unit
-      if (pathLower.includes('serverscriptservice') || pathLower.includes('serverstorage')) {
-        return 'Unit (Server)';
-      } else if (pathLower.includes('starterplayerscripts') || pathLower.includes('startergui')) {
-        return 'Unit (Client)';
-      }
-      return 'Unit';
-    }
-    
-    if (nameLower.endsWith('service') || nameLower.includes('service')) return 'Service';
-    if (nameLower.endsWith('controller') || nameLower.includes('controller')) return 'Controller';
-    if (nameLower.endsWith('component') || nameLower.includes('component')) return 'Component';
+    if (moduleInfo.isWallyPackage) return 'Wally';
+    if (nameLower.includes('service')) return 'Service';
+    if (nameLower.includes('controller')) return 'Controller';
+    if (nameLower.includes('component')) return 'Component';
     if (nameLower.includes('util') || nameLower.includes('helper')) return 'Utility';
     if (pathLower.includes('serverscriptservice') || pathLower.includes('serverstorage')) return 'Server';
     if (pathLower.includes('starterplayerscripts') || pathLower.includes('startergui')) return 'Client';
     if (pathLower.includes('replicatedstorage')) return 'Shared';
-    if (nameLower.includes('types')) return 'Types';
-    if (nameLower.includes('config')) return 'Config';
-    
     return 'Module';
   }
 
   /**
-   * Create a completion item for a module
+   * Create a completion item
    */
   private createCompletionItem(
     moduleInfo: ModuleInfo,
-    document: vscode.TextDocument,
     position: vscode.Position,
     leadingWhitespace: string,
-    fullMatch: string,
     textBeforeCursor: string,
     sortIndex: number,
     definedServices: Map<string, string>,
+    definedVariables: DefinedVariable[],
     currentScriptPath: string | null
   ): vscode.CompletionItem {
-    // Sanitize name - remove any remaining extensions and make it a valid Lua identifier
     let varName = moduleInfo.name
-      .replace(/\.(luau|lua|server|client)$/gi, '') // Remove extensions
-      .replace(/[^a-zA-Z0-9_]/g, '_') // Replace invalid chars with underscore
-      .replace(/^[0-9]/, '_$&'); // Prefix with _ if starts with number
+      .replace(/\.(luau|lua|server|client)$/gi, '')
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .replace(/^[0-9]/, '_$&');
     
-    // Capitalize first letter for Wally packages
     if (moduleInfo.isWallyPackage && varName.length > 0) {
       varName = varName.charAt(0).toUpperCase() + varName.slice(1);
     }
     
-    // Determine the best path to use for require
-    let requirePath = moduleInfo.instancePath;
-    let pathNote = '';
-    
-    // First, try to use a relative path if applicable
-    if (currentScriptPath) {
-      const relativePath = this.getRelativePath(currentScriptPath, moduleInfo.instancePath);
-      if (relativePath) {
-        requirePath = relativePath;
-        pathNote = ' (relative)';
-      }
-    }
-    
-    // If not using relative path, try to use defined service variables
-    if (!pathNote) {
-      const pathWithService = this.replaceServicesWithVariables(moduleInfo.instancePath, definedServices);
-      if (pathWithService !== moduleInfo.instancePath) {
-        requirePath = pathWithService;
-        pathNote = ' (using defined var)';
-      }
-    }
-    
+    const requirePath = this.buildRequirePath(moduleInfo, definedServices, definedVariables, currentScriptPath);
     const requireStatement = `local ${varName} = require(${requirePath})`;
 
-    // Get appropriate icon based on module type
-    const itemKind = this.getModuleIcon(moduleInfo);
-    const moduleTag = this.getModuleTag(moduleInfo);
-
-    const item = new vscode.CompletionItem(
-      moduleInfo.name,
-      itemKind
-    );
-
-    // Set the text that will be inserted
-    if (this.config.autoInsertRequire) {
-      item.insertText = requireStatement;
-    } else {
-      item.insertText = `require(${requirePath})`;
-    }
-
-    // Show the instance path and module tag as detail
-    if (this.config.showPathInDetail) {
-      item.detail = `${moduleTag}  •  ${requirePath}${pathNote}`;
-    } else {
-      item.detail = moduleTag;
-    }
-
-    // Build rich documentation
-    const docParts: string[] = [];
-    docParts.push(`### ${moduleInfo.name}`);
-    docParts.push('');
-    docParts.push(`**Type:** ${moduleTag}`);
-    docParts.push('');
-    if (pathNote) {
-      docParts.push(`**Using:** ${pathNote.trim().replace(/[()]/g, '')}`);
-      docParts.push('');
-    }
-    docParts.push(`**Instance Path:**`);
-    docParts.push(`\`${moduleInfo.instancePath}\``);
-    docParts.push('');
-    docParts.push(`**Require Path:**`);
-    docParts.push(`\`${requirePath}\``);
-    docParts.push('');
-    docParts.push(`**File Path:**`);
-    docParts.push(`\`${moduleInfo.relativePath}\``);
-    docParts.push('');
-    docParts.push('**Generated Require:**');
-    docParts.push('```lua');
-    docParts.push(requireStatement);
-    docParts.push('```');
-
-    item.documentation = new vscode.MarkdownString(docParts.join('\n'));
-    item.documentation.isTrusted = true;
-
-    // Set the range to replace (removes the trigger char and search query)
-    const startPos = new vscode.Position(position.line, leadingWhitespace.length);
-    const endPos = position;
-    item.range = new vscode.Range(startPos, endPos);
-
-    // Use zero-padded index for consistent sort order (preserves our ranking)
+    const item = new vscode.CompletionItem(moduleInfo.name, this.getModuleIcon(moduleInfo));
+    item.insertText = requireStatement;
+    item.detail = `${this.getModuleTag(moduleInfo)} • ${requirePath}`;
+    
+    const doc = new vscode.MarkdownString();
+    doc.appendMarkdown(`**${moduleInfo.name}**\n\n`);
+    doc.appendMarkdown(`**Path:** \`${moduleInfo.instancePath}\`\n\n`);
+    doc.appendCodeblock(requireStatement, 'lua');
+    item.documentation = doc;
+    
+    item.range = new vscode.Range(new vscode.Position(position.line, leadingWhitespace.length), position);
     item.sortText = String(sortIndex).padStart(5, '0');
-
-    // Use the full text before cursor as filter text to prevent VS Code from re-filtering our fuzzy results
     item.filterText = textBeforeCursor;
-
-    // Add a preselect for the first item
-    if (sortIndex === 0) {
-      item.preselect = true;
-    }
+    if (sortIndex === 0) item.preselect = true;
 
     return item;
   }
 
-  /**
-   * Update configuration
-   */
   public updateConfig(config: ExtensionConfig): void {
     this.config = config;
-    this.updateFuseIndex();
   }
 }

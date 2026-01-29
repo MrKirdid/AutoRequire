@@ -58,24 +58,27 @@ This creates a file called `roblox-super-require-1.0.0.vsix` in the folder.
 - Only triggers on line start—won't interfere with your code mid-line
 - Works in both `.lua` and `.luau` files
 
-### 🔍 Fuzzy Search
-- Lightning-fast fuzzy matching powered by [Fuse.js](https://fusejs.io/)
+### 🔍 Advanced Fuzzy Search with Typo Tolerance
+- **Typo-friendly matching**: Type `rpomptclass` and still find `PromptClass`!
+- Uses advanced algorithms: Levenshtein distance, character frequency analysis, keyboard proximity detection
+- Handles character swaps, missing letters, and adjacent key mistakes
 - Type partial names: `:Jan` matches `Janitor`
 - Searches both module names and file paths
 - Handles hundreds of modules without lag
+- Configurable tolerance levels: "normal" or "aggressive"
 - **Only searches `.luau` files** (Rojo standard)
 
-### 🛤️ Automatic Path Resolution
-- **Primary:** Reads `default.project.json` (Rojo project files)
-- **Secondary:** Reads `sourcemap.json` (Rojo sourcemap)
-- **Fallback:** Uses intelligent folder naming conventions
+### 🛤️ Smart Path Resolution
+- **Uses deepest defined variable**: If you have `local Shared = ReplicatedStorage.Shared`, requires use `Shared.Module` instead of `ReplicatedStorage.Shared.Module`
+- **Relative paths**: Automatically uses `script.Parent` paths when modules are close
+- Reads `default.project.json` (Rojo project files)
+- Reads `sourcemap.json` (Rojo sourcemap)
 - Recognizes common Roblox services:
   - `ReplicatedStorage`
   - `ServerScriptService`
   - `ServerStorage`
   - `StarterPlayer`, `StarterGui`
   - And more!
-- Generates paths with `game.` prefix (e.g., `game.ReplicatedStorage.Packages.Janitor`)
 
 ### 📁 init.luau Support
 - Properly handles `init.luau` files (Rojo convention)
@@ -86,11 +89,12 @@ This creates a file called `roblox-super-require-1.0.0.vsix` in the folder.
 - Indexes all `.luau` modules at startup
 - Caches results for instant suggestions
 - Watches for file changes and updates automatically
+- No external dependencies for fuzzy matching (pure TypeScript)
 - No noticeable lag even with large projects
 
 ### 📝 Smart Insertion
 - Automatically generates: `local <ModuleName> = require(game.<InstancePath>)`
-- Replaces the `:` and search query seamlessly
+- Uses existing variable definitions for shorter paths
 - Shows full paths in autocomplete for disambiguation
 
 ---
@@ -150,20 +154,66 @@ local Utils = require(game.ReplicatedStorage.Shared.Utils)
 
 Open VS Code settings (`Ctrl+,` or `Cmd+,`) and search for "Roblox Super Require":
 
+### Core Settings
+
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `robloxSuperRequire.enabled` | `true` | Enable/disable the extension |
-| `robloxSuperRequire.fuzzyThreshold` | `0.4` | Fuzzy search sensitivity (0 = exact, 1 = match anything) |
-| `robloxSuperRequire.maxSuggestions` | `20` | Maximum number of autocomplete suggestions |
+| `enabled` | `true` | Enable/disable the extension |
+| `triggerCharacter` | `:` | Character that triggers autocomplete |
+| `maxSuggestions` | `20` | Maximum number of suggestions |
+| `autoInsertRequire` | `true` | Insert full `local X = require()` statement |
+| `showPathInDetail` | `true` | Show instance path in completion detail |
+| `showModuleIcons` | `true` | Show different icons for module types |
+| `preferWallyPackages` | `false` | Prioritize Wally packages in results |
+
+### Fuzzy Search Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `fuzzyMinScore` | `0.3` | Minimum match score (0-1). Lower = more matches |
+| `typoTolerance` | `aggressive` | `"normal"` or `"aggressive"`. Aggressive handles large typos like `rpomptclass` → `PromptClass` |
+
+### Path Resolution Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `useDeepestVariable` | `true` | Use deepest defined variable for paths. E.g., use `Shared.Module` if `local Shared = RS.Shared` exists |
+| `preferRelativePaths` | `true` | Use `script.Parent` paths when close |
+| `maxParentTraversals` | `3` | Max `.Parent` traversals for relative paths |
 
 **Example `settings.json`:**
 ```json
 {
   "robloxSuperRequire.enabled": true,
-  "robloxSuperRequire.fuzzyThreshold": 0.3,
+  "robloxSuperRequire.typoTolerance": "aggressive",
+  "robloxSuperRequire.fuzzyMinScore": 0.25,
+  "robloxSuperRequire.useDeepestVariable": true,
+  "robloxSuperRequire.preferRelativePaths": true,
   "robloxSuperRequire.maxSuggestions": 30
 }
 ```
+
+---
+
+## 🆕 Deep Path Resolution
+
+One of the most powerful features! If you have existing variable definitions, the extension uses them automatically.
+
+**Example:**
+```lua
+-- Existing definitions in your file:
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared = ReplicatedStorage.Shared
+local Packages = Shared.Packages
+
+-- When you type :Janitor, instead of:
+local Janitor = require(game.ReplicatedStorage.Shared.Packages.Janitor)
+
+-- You get the shortest path:
+local Janitor = require(Packages.Janitor)
+```
+
+The extension finds the **deepest** matching variable and uses it, making your requires clean and consistent!
 
 ---
 
@@ -268,7 +318,7 @@ MIT License - See LICENSE file for details
 ## 🙏 Acknowledgments
 
 - Built with [VS Code Extension API](https://code.visualstudio.com/api)
-- Fuzzy search powered by [Fuse.js](https://fusejs.io/)
+- Custom fuzzy matching with Levenshtein distance, keyboard proximity, and character frequency analysis
 - Inspired by the Roblox development community and [Rojo](https://rojo.space/)
 
 ---

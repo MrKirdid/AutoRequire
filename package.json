@@ -1,9 +1,10 @@
 {
 	"name": "roblox-super-require",
-	"displayName": "Roblox Super Require Autocomplete",
-	"description": "Intelligent require autocomplete for Roblox Lua/Luau with fuzzy search and automatic path resolution",
+	"displayName": "Roblox Super Require",
+	"description": "Intelligent require autocomplete for Roblox Lua/Luau with fuzzy search",
 	"version": "1.0.0",
 	"publisher": "MrKirdid",
+	"icon": "Images/Icon.png",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/MrKirdid/vscode-roblox-super-require.git"
@@ -13,22 +14,18 @@
 	},
 	"categories": [
 		"Programming Languages",
-		"Snippets",
-		"Other"
+		"Snippets"
 	],
 	"keywords": [
 		"roblox",
 		"lua",
 		"luau",
 		"require",
-		"autocomplete",
-		"fuzzy search"
+		"autocomplete"
 	],
 	"activationEvents": [
 		"onLanguage:lua",
-		"onLanguage:luau",
-		"workspaceContains:**/*.luau",
-		"workspaceContains:**/*.lua"
+		"onLanguage:luau"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
@@ -36,18 +33,13 @@
 			{
 				"command": "robloxSuperRequire.reindex",
 				"title": "Roblox Super Require: Reindex Modules"
-			},
-			{
-				"command": "robloxSuperRequire.showStatus",
-				"title": "Roblox Super Require: Show Status"
 			}
 		],
 		"languages": [
 			{
 				"id": "luau",
 				"aliases": [
-					"Luau",
-					"luau"
+					"Luau"
 				],
 				"extensions": [
 					".luau"
@@ -61,52 +53,68 @@
 				"robloxSuperRequire.enabled": {
 					"type": "boolean",
 					"default": true,
-					"description": "Enable/disable Super Require autocomplete"
-				},
-				"robloxSuperRequire.fuzzyThreshold": {
-					"type": "number",
-					"default": 0.4,
-					"minimum": 0,
-					"maximum": 1,
-					"description": "Fuzzy search threshold (0 = exact match, 1 = match anything)"
+					"description": "Enable/disable the extension"
 				},
 				"robloxSuperRequire.maxSuggestions": {
 					"type": "number",
-					"default": 20,
-					"minimum": 1,
-					"maximum": 100,
-					"description": "Maximum number of autocomplete suggestions to show"
+					"default": 15,
+					"minimum": 5,
+					"maximum": 50,
+					"description": "Maximum number of suggestions to show"
 				},
-				"robloxSuperRequire.showActivationMessage": {
-					"type": "boolean",
-					"default": true,
-					"description": "Show a notification message when the extension activates"
+				"robloxSuperRequire.fuzzyMatchStrength": {
+					"type": "string",
+					"enum": [
+						"strict",
+						"normal",
+						"loose"
+					],
+					"default": "normal",
+					"enumDescriptions": [
+						"Strict matching - requires close match",
+						"Normal matching - good balance",
+						"Loose matching - very typo tolerant"
+					],
+					"description": "How tolerant fuzzy search is towards typos"
 				},
-				"robloxSuperRequire.showPathInDetail": {
-					"type": "boolean",
-					"default": true,
-					"description": "Show the full instance path in the autocomplete detail panel"
+				"robloxSuperRequire.pathStyle": {
+					"type": "string",
+					"enum": [
+						"auto",
+						"absolute",
+						"relative"
+					],
+					"default": "auto",
+					"enumDescriptions": [
+						"Automatically choose shortest path",
+						"Always use full game.Service.Path",
+						"Prefer script.Parent paths when possible"
+					],
+					"description": "Preferred path style for require statements"
 				},
-				"robloxSuperRequire.preferWallyPackages": {
+				"robloxSuperRequire.excludePatterns": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [
+						"**/node_modules/**",
+						"**/.git/**",
+						"**/*.spec.lua*",
+						"**/*.test.lua*",
+						"**/*.story.lua*"
+					],
+					"description": "Glob patterns for files to exclude from indexing"
+				},
+				"robloxSuperRequire.useGetService": {
 					"type": "boolean",
 					"default": false,
-					"description": "Prioritize Wally packages at the top of autocomplete suggestions"
+					"description": "Use game:GetService() instead of game.ServiceName"
 				},
-				"robloxSuperRequire.triggerCharacter": {
-					"type": "string",
-					"default": ":",
-					"maxLength": 1,
-					"description": "Character that triggers require autocomplete (default: ':')"
-				},
-				"robloxSuperRequire.autoInsertRequire": {
+				"robloxSuperRequire.debugMode": {
 					"type": "boolean",
-					"default": true,
-					"description": "Automatically insert 'local varName = require(...)' instead of just 'require(...)'"
-				},
-				"robloxSuperRequire.showModuleIcons": {
-					"type": "boolean",
-					"default": true,
-					"description": "Show different icons for different module types (Services, Controllers, Wally packages, etc.)"
+					"default": false,
+					"description": "Enable debug logging to output channel"
 				}
 			}
 		}
@@ -116,7 +124,6 @@
 		"compile": "node esbuild.js",
 		"watch": "node esbuild.js --watch",
 		"package": "node esbuild.js --production",
-		"pretest": "npm run compile",
 		"lint": "eslint src --ext ts"
 	},
 	"devDependencies": {
@@ -128,8 +135,5 @@
 		"esbuild": "^0.27.2",
 		"eslint": "^8.0.0",
 		"typescript": "^5.0.0"
-	},
-	"dependencies": {
-		"fuse.js": "^7.0.0"
 	}
 }
