@@ -3,6 +3,30 @@
  */
 
 /**
+ * Module types for better icon categorization
+ */
+export enum ModuleType {
+  /** Standard module script */
+  Module = 'module',
+  /** Wally package */
+  WallyPackage = 'wally',
+  /** Shared module (ReplicatedStorage) */
+  Shared = 'shared',
+  /** Server module (ServerScriptService/ServerStorage) */
+  Server = 'server',
+  /** Client module (StarterPlayerScripts, etc.) */
+  Client = 'client',
+  /** Utility/Helper module */
+  Utility = 'utility',
+  /** Service-like module */
+  Service = 'service',
+  /** Controller module */
+  Controller = 'controller',
+  /** Component module */
+  Component = 'component',
+}
+
+/**
  * Represents a cached module in the workspace
  */
 export interface ModuleInfo {
@@ -20,6 +44,9 @@ export interface ModuleInfo {
   
   /** Whether this is a Wally package (for capitalization) */
   isWallyPackage?: boolean;
+
+  /** The type/category of this module for icon display */
+  moduleType?: ModuleType;
 }
 
 /**
@@ -85,7 +112,22 @@ export interface RojoProject {
  * Configuration settings for the extension
  */
 export interface ExtensionConfig {
+  /** Enable/disable the extension */
   enabled: boolean;
+  /** Fuzzy search threshold (0 = exact match, 1 = match anything) */
   fuzzyThreshold: number;
+  /** Maximum number of suggestions to show */
   maxSuggestions: number;
+  /** Show activation message when extension loads */
+  showActivationMessage: boolean;
+  /** Show the full path in completion item detail */
+  showPathInDetail: boolean;
+  /** Prioritize Wally packages over other modules */
+  preferWallyPackages: boolean;
+  /** Character that triggers autocomplete */
+  triggerCharacter: string;
+  /** Automatically insert require statement on selection */
+  autoInsertRequire: boolean;
+  /** Show module type icons in autocomplete */
+  showModuleIcons: boolean;
 }

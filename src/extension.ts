@@ -3,59 +3,19 @@ import { ModuleIndexer } from './moduleIndexer';
 import { PathResolver } from './pathResolver';
 import { RequireCompletionProvider } from './completionProvider';
 import { ExtensionConfig } from './types';
-<<<<<<< HEAD
-=======
 import { logger } from './logger';
->>>>>>> copilot/fix-rojo-autocomplete-extension
 
 let moduleIndexer: ModuleIndexer | undefined;
 let pathResolver: PathResolver | undefined;
 let completionProvider: RequireCompletionProvider | undefined;
 let disposables: vscode.Disposable[] = [];
-<<<<<<< HEAD
-=======
 let isActivating: boolean = false;
 let isReinitializing: boolean = false;
->>>>>>> copilot/fix-rojo-autocomplete-extension
 
 /**
  * Extension activation
  */
 export async function activate(context: vscode.ExtensionContext) {
-<<<<<<< HEAD
-  console.log('[Super Require] Extension activating...');
-
-  // Get workspace folders
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  
-  if (!workspaceFolders || workspaceFolders.length === 0) {
-    console.log('[Super Require] No workspace folder found, extension will not activate');
-    return;
-  }
-
-  // Load configuration
-  const config = loadConfiguration();
-
-  // Initialize components
-  pathResolver = new PathResolver(workspaceFolders);
-  moduleIndexer = new ModuleIndexer(workspaceFolders, pathResolver);
-  completionProvider = new RequireCompletionProvider(moduleIndexer, config);
-
-  // Index modules
-  await moduleIndexer.initialize();
-
-  // Register completion provider for Lua and Luau files
-  const luaSelector: vscode.DocumentSelector = [
-    { scheme: 'file', language: 'lua' },
-    { scheme: 'file', language: 'luau' }
-  ];
-
-  const providerDisposable = vscode.languages.registerCompletionItemProvider(
-    luaSelector,
-    completionProvider,
-    ':' // Trigger character
-  );
-=======
   // Prevent concurrent activation
   if (isActivating) {
     logger.warn('Activation already in progress, skipping');
@@ -137,179 +97,126 @@ export async function activate(context: vscode.ExtensionContext) {
       ...triggerCharacters,
       ...alphaNum
     );
->>>>>>> copilot/fix-rojo-autocomplete-extension
 
-  disposables.push(providerDisposable);
+    disposables.push(providerDisposable);
 
-  // Watch for configuration changes
-  const configWatcher = vscode.workspace.onDidChangeConfiguration(e => {
-    if (e.affectsConfiguration('robloxSuperRequire')) {
-<<<<<<< HEAD
-      console.log('[Super Require] Configuration changed, reloading...');
-=======
->>>>>>> copilot/fix-rojo-autocomplete-extension
-      const newConfig = loadConfiguration();
-      completionProvider?.updateConfig(newConfig);
-    }
-  });
-
-  disposables.push(configWatcher);
-
-  // Watch for workspace folder changes
-<<<<<<< HEAD
-  const workspaceWatcher = vscode.workspace.onDidChangeWorkspaceFolders(() => {
-    console.log('[Super Require] Workspace folders changed, reinitializing...');
-    deactivate();
-    activate(context);
-=======
-  const workspaceWatcher = vscode.workspace.onDidChangeWorkspaceFolders(async () => {
-    if (isReinitializing) {
-      return;
-    }
-    isReinitializing = true;
-    try {
-      const newWorkspaceFolders = vscode.workspace.workspaceFolders;
-      if (newWorkspaceFolders && newWorkspaceFolders.length > 0) {
-        pathResolver = new PathResolver(newWorkspaceFolders);
-        await pathResolver.initialize();
-        moduleIndexer?.dispose();
-        moduleIndexer = new ModuleIndexer(newWorkspaceFolders, pathResolver);
-        await moduleIndexer.initialize();
-        completionProvider?.updateFuseIndex();
+    // Watch for configuration changes
+    const configWatcher = vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('robloxSuperRequire')) {
+        const newConfig = loadConfiguration();
+        completionProvider?.updateConfig(newConfig);
+        logger.info('Configuration updated');
       }
-    } catch (e) {
-      logger.error('Failed to reinitialize after workspace change', e);
-    } finally {
-      isReinitializing = false;
-    }
->>>>>>> copilot/fix-rojo-autocomplete-extension
-  });
+    });
 
-  disposables.push(workspaceWatcher);
+    disposables.push(configWatcher);
 
-  // Watch for sourcemap.json changes
-  const sourcemapWatcher = vscode.workspace.createFileSystemWatcher('**/sourcemap.json');
-  
-<<<<<<< HEAD
-  sourcemapWatcher.onDidChange(() => {
-    console.log('[Super Require] sourcemap.json changed, reloading...');
-    pathResolver?.reloadSourcemaps();
-    pathResolver?.clearCache();
-    moduleIndexer?.rebuildIndex();
-    completionProvider?.updateFuseIndex();
-  });
+    // Watch for workspace folder changes
+    const workspaceWatcher = vscode.workspace.onDidChangeWorkspaceFolders(async () => {
+      if (isReinitializing) {
+        return;
+      }
+      isReinitializing = true;
+      try {
+        const newWorkspaceFolders = vscode.workspace.workspaceFolders;
+        if (newWorkspaceFolders && newWorkspaceFolders.length > 0) {
+          pathResolver = new PathResolver(newWorkspaceFolders);
+          await pathResolver.initialize();
+          moduleIndexer?.dispose();
+          moduleIndexer = new ModuleIndexer(newWorkspaceFolders, pathResolver);
+          await moduleIndexer.initialize();
+          completionProvider?.updateFuseIndex();
+        }
+      } catch (e) {
+        logger.error('Failed to reinitialize after workspace change', e);
+      } finally {
+        isReinitializing = false;
+      }
+    });
 
-  sourcemapWatcher.onDidCreate(() => {
-    console.log('[Super Require] sourcemap.json created, reloading...');
-    pathResolver?.reloadSourcemaps();
-    pathResolver?.clearCache();
-    moduleIndexer?.rebuildIndex();
-    completionProvider?.updateFuseIndex();
-  });
+    disposables.push(workspaceWatcher);
 
-  sourcemapWatcher.onDidDelete(() => {
-    console.log('[Super Require] sourcemap.json deleted, reloading...');
-    pathResolver?.reloadSourcemaps();
-    pathResolver?.clearCache();
-    moduleIndexer?.rebuildIndex();
-    completionProvider?.updateFuseIndex();
-  });
-
-  disposables.push(sourcemapWatcher);
-=======
-  const handleSourcemapChange = async () => {
-    if (isReinitializing) return;
-    pathResolver?.reloadSourcemaps();
-    pathResolver?.clearCache();
-    await moduleIndexer?.rebuildIndex();
-    completionProvider?.updateFuseIndex();
-  };
-
-  const sourcemapChangeDisposable = sourcemapWatcher.onDidChange(handleSourcemapChange);
-  const sourcemapCreateDisposable = sourcemapWatcher.onDidCreate(handleSourcemapChange);
-  const sourcemapDeleteDisposable = sourcemapWatcher.onDidDelete(handleSourcemapChange);
-
-  disposables.push(sourcemapWatcher, sourcemapChangeDisposable, sourcemapCreateDisposable, sourcemapDeleteDisposable);
-
-  // Watch for default.project.json changes (Rojo project file)
-  const rojoProjectWatcher = vscode.workspace.createFileSystemWatcher('**/default.project.json');
-  
-  const handleRojoProjectChange = async () => {
-    if (isReinitializing) return;
-    pathResolver?.reloadRojoProjects();
-    pathResolver?.clearCache();
-    await moduleIndexer?.rebuildIndex();
-    completionProvider?.updateFuseIndex();
-  };
-
-  const rojoChangeDisposable = rojoProjectWatcher.onDidChange(handleRojoProjectChange);
-  const rojoCreateDisposable = rojoProjectWatcher.onDidCreate(handleRojoProjectChange);
-  const rojoDeleteDisposable = rojoProjectWatcher.onDidDelete(handleRojoProjectChange);
-
-  disposables.push(rojoProjectWatcher, rojoChangeDisposable, rojoCreateDisposable, rojoDeleteDisposable);
->>>>>>> copilot/fix-rojo-autocomplete-extension
-
-  // Register commands
-  const reindexCommand = vscode.commands.registerCommand(
-    'robloxSuperRequire.reindex',
-    async () => {
-<<<<<<< HEAD
-      vscode.window.showInformationMessage('Reindexing modules...');
-=======
->>>>>>> copilot/fix-rojo-autocomplete-extension
+    // Watch for sourcemap.json changes
+    const sourcemapWatcher = vscode.workspace.createFileSystemWatcher('**/sourcemap.json');
+    
+    const handleSourcemapChange = async () => {
+      if (isReinitializing) return;
+      pathResolver?.reloadSourcemaps();
+      pathResolver?.clearCache();
       await moduleIndexer?.rebuildIndex();
       completionProvider?.updateFuseIndex();
-      const count = moduleIndexer?.getModuleCount() || 0;
-      vscode.window.showInformationMessage(`Indexed ${count} modules`);
-    }
-  );
-<<<<<<< HEAD
+    };
 
-  disposables.push(reindexCommand);
+    const sourcemapChangeDisposable = sourcemapWatcher.onDidChange(handleSourcemapChange);
+    const sourcemapCreateDisposable = sourcemapWatcher.onDidCreate(handleSourcemapChange);
+    const sourcemapDeleteDisposable = sourcemapWatcher.onDidDelete(handleSourcemapChange);
 
-  // Add all disposables to context
-  context.subscriptions.push(...disposables);
+    disposables.push(sourcemapWatcher, sourcemapChangeDisposable, sourcemapCreateDisposable, sourcemapDeleteDisposable);
 
-  const moduleCount = moduleIndexer.getModuleCount();
-  console.log(`[Super Require] Extension activated successfully! Indexed ${moduleCount} modules.`);
-  
-  // Show a subtle notification
-  vscode.window.showInformationMessage(
-    `Roblox Super Require: Indexed ${moduleCount} modules`
-  );
-=======
-  disposables.push(reindexCommand);
+    // Watch for default.project.json changes (Rojo project file)
+    const rojoProjectWatcher = vscode.workspace.createFileSystemWatcher('**/default.project.json');
+    
+    const handleRojoProjectChange = async () => {
+      if (isReinitializing) return;
+      pathResolver?.reloadRojoProjects();
+      pathResolver?.clearCache();
+      await moduleIndexer?.rebuildIndex();
+      completionProvider?.updateFuseIndex();
+    };
 
-  // Status command to check if extension is working
-  const statusCommand = vscode.commands.registerCommand(
-    'robloxSuperRequire.showStatus',
-    () => {
-      const count = moduleIndexer?.getModuleCount() || 0;
-      const modules = moduleIndexer?.getModules() || [];
-      
-      let message = `Roblox Super Require Status:\n`;
-      message += `- Extension: Active ✓\n`;
-      message += `- Modules indexed: ${count}\n`;
-      message += `- Enabled: ${config.enabled}\n`;
-      
-      if (count > 0) {
-        message += `\nFirst 5 modules:\n`;
-        modules.slice(0, 5).forEach((m, i) => {
-          message += `${i + 1}. ${m.name}\n`;
-        });
+    const rojoChangeDisposable = rojoProjectWatcher.onDidChange(handleRojoProjectChange);
+    const rojoCreateDisposable = rojoProjectWatcher.onDidCreate(handleRojoProjectChange);
+    const rojoDeleteDisposable = rojoProjectWatcher.onDidDelete(handleRojoProjectChange);
+
+    disposables.push(rojoProjectWatcher, rojoChangeDisposable, rojoCreateDisposable, rojoDeleteDisposable);
+
+    // Register commands
+    const reindexCommand = vscode.commands.registerCommand(
+      'robloxSuperRequire.reindex',
+      async () => {
+        await moduleIndexer?.rebuildIndex();
+        completionProvider?.updateFuseIndex();
+        const count = moduleIndexer?.getModuleCount() || 0;
+        vscode.window.showInformationMessage(`Indexed ${count} modules`);
       }
-      
-      vscode.window.showInformationMessage(message, { modal: true });
-      logger.show();
+    );
+    disposables.push(reindexCommand);
+
+    // Status command to check if extension is working
+    const statusCommand = vscode.commands.registerCommand(
+      'robloxSuperRequire.showStatus',
+      () => {
+        const count = moduleIndexer?.getModuleCount() || 0;
+        const modules = moduleIndexer?.getModules() || [];
+        
+        let message = `Roblox Super Require Status:\n`;
+        message += `- Extension: Active ✓\n`;
+        message += `- Modules indexed: ${count}\n`;
+        message += `- Enabled: ${config.enabled}\n`;
+        
+        if (count > 0) {
+          message += `\nFirst 5 modules:\n`;
+          modules.slice(0, 5).forEach((m, i) => {
+            message += `${i + 1}. ${m.name}\n`;
+          });
+        }
+        
+        vscode.window.showInformationMessage(message, { modal: true });
+        logger.show();
+      }
+    );
+    disposables.push(statusCommand);
+
+    // Add all disposables to context
+    context.subscriptions.push(...disposables);
+
+    const moduleCount = moduleIndexer?.getModuleCount() || 0;
+    logger.info(`Activated with ${moduleCount} modules indexed`);
+
+    // Show activation notification based on settings
+    if (config.showActivationMessage) {
+      vscode.window.showInformationMessage(`Roblox Super Require: Indexed ${moduleCount} modules`);
     }
-  );
-  disposables.push(statusCommand);
-
-  // Add all disposables to context
-  context.subscriptions.push(...disposables);
-
-  const moduleCount = moduleIndexer?.getModuleCount() || 0;
-  logger.info(`Activated with ${moduleCount} modules indexed`);
 
   } catch (error) {
     // Catch any unhandled errors during activation
@@ -318,7 +225,6 @@ export async function activate(context: vscode.ExtensionContext) {
   } finally {
     isActivating = false;
   }
->>>>>>> copilot/fix-rojo-autocomplete-extension
 }
 
 /**
@@ -331,6 +237,12 @@ function loadConfiguration(): ExtensionConfig {
     enabled: config.get<boolean>('enabled', true),
     fuzzyThreshold: config.get<number>('fuzzyThreshold', 0.4),
     maxSuggestions: config.get<number>('maxSuggestions', 20),
+    showActivationMessage: config.get<boolean>('showActivationMessage', true),
+    showPathInDetail: config.get<boolean>('showPathInDetail', true),
+    preferWallyPackages: config.get<boolean>('preferWallyPackages', false),
+    triggerCharacter: config.get<string>('triggerCharacter', ':'),
+    autoInsertRequire: config.get<boolean>('autoInsertRequire', true),
+    showModuleIcons: config.get<boolean>('showModuleIcons', true),
   };
 }
 
@@ -338,15 +250,6 @@ function loadConfiguration(): ExtensionConfig {
  * Extension deactivation
  */
 export function deactivate() {
-<<<<<<< HEAD
-  console.log('[Super Require] Extension deactivating...');
-
-  // Dispose all resources
-  moduleIndexer?.dispose();
-  
-  for (const disposable of disposables) {
-    disposable.dispose();
-=======
   // Dispose in reverse order of creation
   moduleIndexer?.dispose();
   pathResolver?.dispose();
@@ -357,21 +260,14 @@ export function deactivate() {
     } catch (e) {
       // Ignore disposal errors
     }
->>>>>>> copilot/fix-rojo-autocomplete-extension
   }
 
   disposables = [];
   moduleIndexer = undefined;
   pathResolver = undefined;
   completionProvider = undefined;
-<<<<<<< HEAD
-
-  console.log('[Super Require] Extension deactivated');
-}
-=======
   isActivating = false;
   isReinitializing = false;
   
   logger.dispose();
 }
->>>>>>> copilot/fix-rojo-autocomplete-extension

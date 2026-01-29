@@ -76,6 +76,37 @@
 					"minimum": 1,
 					"maximum": 100,
 					"description": "Maximum number of autocomplete suggestions to show"
+				},
+				"robloxSuperRequire.showActivationMessage": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show a notification message when the extension activates"
+				},
+				"robloxSuperRequire.showPathInDetail": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show the full instance path in the autocomplete detail panel"
+				},
+				"robloxSuperRequire.preferWallyPackages": {
+					"type": "boolean",
+					"default": false,
+					"description": "Prioritize Wally packages at the top of autocomplete suggestions"
+				},
+				"robloxSuperRequire.triggerCharacter": {
+					"type": "string",
+					"default": ":",
+					"maxLength": 1,
+					"description": "Character that triggers require autocomplete (default: ':')"
+				},
+				"robloxSuperRequire.autoInsertRequire": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically insert 'local varName = require(...)' instead of just 'require(...)'"
+				},
+				"robloxSuperRequire.showModuleIcons": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show different icons for different module types (Services, Controllers, Wally packages, etc.)"
 				}
 			}
 		}

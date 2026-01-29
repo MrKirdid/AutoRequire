@@ -14,7 +14,7 @@ Open a terminal (Command Prompt or PowerShell) and run these commands:
 
 ```bash
 # Clone the repository
-git clone https://github.com/MrKirdid/vscode-roblox-super-require.git
+git clone https://github.com/MrKirdid/AutoRequire.git
 
 # Enter the folder
 cd vscode-roblox-super-require
